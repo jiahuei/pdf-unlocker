@@ -2,6 +2,8 @@
 
 Unlock password-protected PDF files right in your browser!
 
+[Try the live demo !!!](https://jiahuei.github.io/pdf-unlocker/)
+
 ## Features
 
 - **Secure**: Files are processed locally in your browser - no uploads to external servers
