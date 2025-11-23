@@ -780,15 +780,15 @@
           );
           if (type === "error") {
             messageDiv.classList.add("bg-red-100", "text-red-700");
+            // Auto hide after 5 seconds
+            setTimeout(() => {
+              messageDiv.classList.add("hidden");
+            }, 5000);
           } else if (type === "success") {
             messageDiv.classList.add("bg-green-100", "text-green-700");
           } else if (type === "info") {
             messageDiv.classList.add("bg-blue-100", "text-blue-700");
           }
-          // Auto hide after 5 seconds
-          setTimeout(() => {
-            messageDiv.classList.add("hidden");
-          }, 5000);
         }
       });
     </script>
