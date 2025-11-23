@@ -1,0 +1,51 @@
+{
+  "MAIN_IF_GUARD": {
+    "prefix": "mm",
+    "body": ["if __name__ == \"__main__\":", "    $0"],
+  },
+  "TIME": {
+    "prefix": "tt",
+    "body": ["from time import perf_counter", "t0 = perf_counter()", "$0", "print(f\"t={(perf_counter() - t0) * 1e3:,.2f} ms\")"],
+  },
+  "TYPING_IMPORTS": {
+    "prefix": "typ",
+    "body": ["from __future__ import annotations", "from typing import TypeVar, Type, Optional, Union, Any, List, Dict, Tuple"],
+  },
+  "GET_LOGGER": {
+    "prefix": "lgg",
+    "body": ["from loguru import logger"],
+  },
+  "SET_LOGGER": {
+    "prefix": "lggl",
+    "body": ["logger.remove()", "logger.add(sys.stderr, level=$0)"],
+  },
+  "CURRENT_DIRECTORY": {
+    "prefix": "cdd",
+    "body": ["from pathlib import Path", "CURR_DIR = Path(__file__).resolve().parent"],
+  },
+  "TF_GRAPH_BOILERPLATE": {
+    "prefix": "tgg",
+    "body": [
+      "g = tf.Graph()",
+      "with g.as_default():",
+      "    tf.compat.v1.set_random_seed(0)",
+      "    init_fn = tf.global_variables_initializer()",
+      "",
+      "gpu_options = tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.5)",
+      "sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(gpu_options=gpu_options), graph=g)",
+      "",
+      "with sess:",
+      "    sess.run(init_fn)",
+      "    g.finalize()",
+      "    $0",
+    ],
+  },
+  "TF_WARNING_SUPPRESS": {
+    "prefix": "tww",
+    "body": ["os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"1\"", "tf.get_logger().setLevel(\"ERROR\")", "$0"],
+  },
+  "CUDA_VISIBLE_DEVICES": {
+    "prefix": "cuda",
+    "body": ["os.environ[\"CUDA_DEVICE_ORDER\"] = \"PCI_BUS_ID\"", "os.environ[\"CUDA_VISIBLE_DEVICES\"] = \"$0\""],
+  },
+}
