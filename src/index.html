@@ -9,64 +9,54 @@
         <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
-        <link rel="icon" type="image/png" href="/assets/favicon-96x96.png" sizes="96x96" />
-        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
-        <link rel="shortcut icon" href="/assets/favicon.ico" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
-        <link rel="manifest" href="/assets/site.webmanifest" />
+        <link rel="icon" type="image/png" href="/assets/favicon-96x96.png" sizes="96x96"/>
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg"/>
+        <link rel="shortcut icon" href="/assets/favicon.ico"/>
+        <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png"/>
+        <link rel="manifest" href="/assets/site.webmanifest"/>
         <style>
             :root {
                 --beige: #f5f5dc;
                 --beige-light: #faf8f3;
                 --beige-dark: #e6e2cf;
             }
-
             body {
                 background-color: var(--beige-light);
             }
-
             .card {
                 background-color: white;
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
                 transition: all 0.3s ease;
             }
-
             .card:hover {
                 box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
             }
-
             .btn-primary {
                 background-color: var(--beige);
                 color: #333;
                 transition: all 0.2s ease;
             }
-
             .btn-primary:hover {
                 background-color: var(--beige-dark);
             }
-
             .input-field {
                 border-bottom: 1px solid #ccc;
                 transition: border-color 0.3s;
             }
-
             .input-field:focus {
                 border-bottom-color: var(--beige-dark);
                 outline: none;
             }
-
             .pdf-viewer {
                 background-color: #f9f9f9;
                 border: 1px solid #e0e0e0;
                 position: relative;
                 overflow: hidden;
             }
-
             .ripple {
                 position: relative;
                 overflow: hidden;
             }
-
             .ripple:after {
                 content: "";
                 display: block;
@@ -83,13 +73,11 @@
                 opacity: 0;
                 transition: transform 0.5s, opacity 1s;
             }
-
             .ripple:active:after {
                 transform: scale(0, 0);
                 opacity: 0.3;
                 transition: 0s;
             }
-
             .loader {
                 border: 3px solid #f3f3f3;
                 border-top: 3px solid var(--beige-dark);
@@ -100,7 +88,6 @@
                 display: inline-block;
                 margin-right: 8px;
             }
-
             @keyframes spin {
                 0% {
                     transform: rotate(0deg);
@@ -109,7 +96,6 @@
                     transform: rotate(360deg);
                 }
             }
-
             .pdf-canvas-container {
                 width: 100%;
                 height: calc(100% - 40px);
@@ -118,13 +104,11 @@
                 align-items: center;
                 overflow: auto;
             }
-
             .pdf-canvas {
                 max-width: 100%;
                 max-height: 100%;
                 box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             }
-
             .pdf-controls {
                 position: absolute;
                 bottom: 10px;
@@ -137,7 +121,6 @@
                 border-radius: 5px;
                 box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             }
-
             .pdf-controls button {
                 background-color: var(--beige);
                 border: none;
@@ -146,30 +129,25 @@
                 cursor: pointer;
                 transition: background-color 0.2s;
             }
-
             .pdf-controls button:hover {
                 background-color: var(--beige-dark);
             }
-
             .pdf-controls button:disabled {
                 opacity: 0.5;
                 cursor: not-allowed;
             }
-
             .page-info {
                 display: flex;
                 align-items: center;
                 font-size: 14px;
                 color: #333;
             }
-
             .file-name {
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 max-width: 100%;
             }
-
             .feature-icon {
                 background-color: var(--beige);
                 color: #333;
@@ -182,13 +160,11 @@
                 margin-right: 15px;
                 flex-shrink: 0;
             }
-
             .status-container {
                 display: flex;
                 align-items: center;
                 justify-content: center;
             }
-
             .feature-item h4 {
                 margin-bottom: 0.25rem;
             }
@@ -203,7 +179,6 @@
                 </div>
             </div>
         </header>
-
         <main class="flex-grow container mx-auto px-4 py-8">
             <div class="max-w-5xl mx-auto">
                 <div class="text-center mb-10">
@@ -213,14 +188,12 @@
                         <span>Loading libraries... <span id="loadingPercent">(0%)</span></span>
                     </div>
                 </div>
-
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div class="card rounded-xl p-6">
                         <h3 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
                             <i class="fas fa-lock-open mr-2 text-amber-700"></i>
                             Unlock Your PDF
                         </h3>
-
                         <div class="mb-6">
                             <label class="block text-gray-700 mb-2 font-medium">Select PDF File</label>
                             <div class="relative">
@@ -231,31 +204,26 @@
                                 </label>
                             </div>
                         </div>
-
                         <div class="mb-6">
-                            <label class="block text-gray-700 mb-2 font-medium">Enter Password</label>
+                            <label class="block text-gray-700 mb-2 font-medium">Enter Password (optional if not password-protected)</label>
                             <div class="relative">
-                                <input type="password" id="password" class="input-field w-full py-3 px-4 bg-transparent border-0 border-b rounded-none focus:ring-0" placeholder="PDF password">
+                                <input type="password" id="password" class="input-field w-full py-3 px-4 bg-transparent border-0 border-b rounded-none focus:ring-0" placeholder="PDF password (defaults to 'password')">
                                 <button id="togglePassword" class="absolute right-3 top-3 text-gray-500 hover:text-gray-700">
                                     <i class="fas fa-eye"></i>
                                 </button>
                             </div>
                         </div>
-
                         <button id="unlockBtn" class="btn-primary ripple w-full py-3 px-4 rounded-lg font-medium flex items-center justify-center">
                             <i class="fas fa-unlock-alt mr-2"></i>
                             Unlock PDF
                         </button>
-
                         <div id="message" class="mt-4 p-3 rounded-lg hidden"></div>
                     </div>
-
                     <div class="card rounded-xl p-6">
                         <h3 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
                             <i class="fas fa-file-alt mr-2 text-amber-700"></i>
                             PDF Preview
                         </h3>
-
                         <div id="pdfPreview" class="pdf-viewer h-96 rounded-lg">
                             <div class="pdf-canvas-container">
                                 <div class="text-center text-gray-500">
@@ -264,7 +232,6 @@
                                 </div>
                             </div>
                         </div>
-
                         <div id="pdfActions" class="mt-4 flex space-x-3 hidden">
                             <button id="downloadBtn" class="btn-primary ripple flex-1 py-2 px-4 rounded-lg font-medium flex items-center justify-center">
                                 <i class="fas fa-download mr-2"></i>
@@ -277,7 +244,6 @@
                         </div>
                     </div>
                 </div>
-
                 <div class="mt-12 card rounded-xl p-6">
                     <h3 class="text-xl font-semibold text-gray-800 mb-6 flex items-center">
                         <i class="fas fa-star mr-2 text-amber-700"></i>
@@ -315,7 +281,6 @@
                 </div>
             </div>
         </main>
-
         <footer class="bg-white py-6 border-t">
             <div class="container mx-auto px-4">
                 <div class="flex flex-col md:flex-row justify-between items-center">
@@ -336,7 +301,6 @@
                 </div>
             </div>
         </footer>
-
         <script>
             document.addEventListener('DOMContentLoaded', function () {
                 const pdfFileInput = document.getElementById('pdfFile');
@@ -351,7 +315,6 @@
                 const resetBtn = document.getElementById('resetBtn');
                 const pyodideStatus = document.getElementById('pyodideStatus');
                 const loadingPercent = document.getElementById('loadingPercent');
-
                 let unlockedPdfBlob = null;
                 let pyodide = null;
                 let pdfDoc = null;
@@ -361,44 +324,37 @@
                 let scale = 1.5;
                 let pyodideReady = false;
                 let pendingUnlock = null;
-
                 // Update loading percentage
                 function updateProgress(percent) {
                     loadingPercent.textContent = `(${percent}%)`;
                 }
-
                 // Start loading Pyodide asynchronously
                 async function initializePyodide() {
                     try {
                         updateProgress(10);
                         pyodide = await loadPyodide();
-
                         updateProgress(30);
                         await pyodide.loadPackage("micropip");
-
                         updateProgress(50);
                         await pyodide.runPythonAsync(`
                         import micropip
                         await micropip.install('pypdf')
                     `);
-
                         updateProgress(80);
                         // Define the Python function using pypdf
                         pyodide.runPython(`
                         import pypdf
                         import io
-                        
                         def unlock_pdf_pypdf(input_pdf, password):
                             """
                             Unlock PDF using pypdf library.
                             input_pdf: bytes of the input PDF
                             password: string
-                            Returns: bytes of the unlocked PDF or None if failed.
+                            Returns: tuple (bytes of the unlocked PDF or None if failed, was_encrypted: bool)
                             """
                             try:
                                 # Create a PDF reader object from bytes
                                 reader = pypdf.PdfReader(io.BytesIO(input_pdf))
-                                
                                 # Check if the PDF is encrypted
                                 if reader.is_encrypted:
                                     # Try to decrypt with the provided password
@@ -412,22 +368,20 @@
                                         output_buffer = io.BytesIO()
                                         writer.write(output_buffer)
                                         output_buffer.seek(0)
-                                        return output_buffer.read()
+                                        return (output_buffer.read(), True)
                                     else:
                                         print("✗ Incorrect password!")
-                                        return None
+                                        return (None, True)
                                 else:
                                     # If not encrypted, just return the original
-                                    return input_pdf
+                                    return (input_pdf, False)
                             except Exception as e:
                                 print(f"✗ Error: {str(e)}")
-                                return None
+                                return (None, False)
                     `);
-
                         updateProgress(100);
                         pyodideReady = true;
                         pyodideStatus.innerHTML = '<i class="fas fa-check-circle text-green-500 mr-2"></i> Libraries loaded successfully';
-
                         // If there's a pending unlock operation, execute it now
                         if (pendingUnlock) {
                             executeUnlock(pendingUnlock.file, pendingUnlock.password);
@@ -438,10 +392,8 @@
                         console.error("Pyodide initialization failed:", error);
                     }
                 }
-
                 // Start Pyodide initialization in the background
                 initializePyodide();
-
                 // Update file name when selected
                 pdfFileInput.addEventListener('change', function () {
                     if (this.files && this.files[0]) {
@@ -463,14 +415,12 @@
                         fileNameDisplay.textContent = 'Choose a file...';
                     }
                 });
-
                 // Toggle password visibility
                 togglePasswordBtn.addEventListener('click', function () {
                     const type = passwordInput.getAttribute('type') === 'password'
                         ? 'text'
                         : 'password';
                     passwordInput.setAttribute('type', type);
-
                     // Toggle icon
                     const icon = this.querySelector('i');
                     if (type === 'password') {
@@ -489,22 +439,15 @@
                             .add('fa-eye-slash');
                     }
                 });
-
                 // Unlock PDF using Pyodide
                 unlockBtn.addEventListener('click', function () {
                     const file = pdfFileInput.files[0];
-                    const password = passwordInput.value;
-
+                    // Use "password" as default if no password is provided
+                    const password = passwordInput.value.trim() || "password";
                     if (!file) {
                         showMessage('Please select a PDF file', 'error');
                         return;
                     }
-
-                    if (!password) {
-                        showMessage('Please enter the password', 'error');
-                        return;
-                    }
-
                     if (!pyodideReady) {
                         // Store the unlock operation for later execution
                         pendingUnlock = {
@@ -514,23 +457,18 @@
                         showMessage('Libraries are still loading. Please wait...', 'info');
                         return;
                     }
-
                     executeUnlock(file, password);
                 });
-
                 // Execute the unlock operation
                 async function executeUnlock(file, password) {
                     // Simulate processing
                     unlockBtn.disabled = true;
                     unlockBtn.innerHTML = '<span class="loader"></span> Unlocking...';
-
                     try {
                         // Read file as ArrayBuffer
                         const arrayBuffer = await file.arrayBuffer();
-
                         // Convert to Uint8Array for Pyodide
                         const uint8Array = new Uint8Array(arrayBuffer);
-
                         // Set variables in Python
                         pyodide
                             .globals
@@ -538,35 +476,53 @@
                         pyodide
                             .globals
                             .set('password', password);
-
                         // Convert Uint8Array to Python bytes and call the function
                         const result = pyodide.runPython(`
                         # Convert the JavaScript Uint8Array to Python bytes
                         input_pdf_bytes = bytes(input_pdf)
-                        
                         # Call the unlock function
                         result = unlock_pdf_pypdf(input_pdf_bytes, password)
                         result
                     `);
-
-                        if (result) {
+                        // result is a tuple: (pdf_bytes or None, was_encrypted)
+                        const resultArray = result.toJs();
+                        const pdfBytes = resultArray[0];
+                        const wasEncrypted = resultArray[1];
+                        
+                        if (pdfBytes) {
                             // Convert Python bytes to JavaScript Uint8Array
-                            const unlockedBytes = result.toJs();
+                            const unlockedBytes = pdfBytes.toJs ? pdfBytes.toJs() : pdfBytes;
                             unlockedPdfBlob = new Blob([unlockedBytes], {type: 'application/pdf'});
-
                             // Setup PDF preview container first
                             setupPDFPreview();
-
-                            // Load PDF for preview
+                            // Load PDF for preview with error handling for iOS
                             const fileURL = URL.createObjectURL(unlockedPdfBlob);
-                            loadPDF(fileURL);
-
-                            // Show actions
-                            pdfActions
-                                .classList
-                                .remove('hidden');
-
-                            showMessage('PDF unlocked successfully!', 'success');
+                            try {
+                                await loadPDF(fileURL);
+                                // Show actions
+                                pdfActions
+                                    .classList
+                                    .remove('hidden');
+                                
+                                // Show appropriate message based on whether PDF was encrypted
+                                if (wasEncrypted) {
+                                    showMessage('PDF unlocked successfully!', 'success');
+                                } else {
+                                    showMessage('PDF has no password.', 'info');
+                                }
+                            } catch (pdfError) {
+                                console.error('Error loading PDF preview:', pdfError);
+                                // Still show success message and download option even if preview fails
+                                pdfActions
+                                    .classList
+                                    .remove('hidden');
+                                
+                                if (wasEncrypted) {
+                                    showMessage('PDF unlocked successfully! (Preview unavailable, but you can download)', 'success');
+                                } else {
+                                    showMessage('PDF has no password. (Preview unavailable, but you can download)', 'info');
+                                }
+                            }
                         } else {
                             showMessage('Incorrect password. Please try again.', 'error');
                         }
@@ -579,7 +535,6 @@
                         unlockBtn.innerHTML = '<i class="fas fa-unlock-alt mr-2"></i> Unlock PDF';
                     }
                 }
-
                 // Setup PDF preview container
                 function setupPDFPreview() {
                     pdfPreview.innerHTML = `
@@ -591,7 +546,7 @@
                             <i class="fas fa-chevron-left"></i>
                         </button>
                         <div class="page-info">
-                            <span>Page: &ensp;</span>
+                            <span class="mr-1">Page:</span>
                             <span id="page_num">1</span>
                             <span> / </span>
                             <span id="page_count">1</span>
@@ -601,7 +556,6 @@
                         </button>
                     </div>
                 `;
-
                     // Add event listeners for page navigation
                     document
                         .getElementById('prev-page')
@@ -610,55 +564,66 @@
                         .getElementById('next-page')
                         .addEventListener('click', onNextPage);
                 }
-
                 // Load PDF for preview
-                function loadPDF(url) {
-                    // Set worker source
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-                    // Load PDF document
-                    const loadingTask = pdfjsLib.getDocument(url);
-                    loadingTask
-                        .promise
-                        .then(function (pdf) {
-                            pdfDoc = pdf;
-
-                            // Update page count
-                            const pageCountElement = document.getElementById('page_count');
-                            if (pageCountElement) {
-                                pageCountElement.textContent = pdf.numPages;
-                            }
-
-                            // Initial render
-                            renderPage(pageNum);
-
-                        }, function (reason) {
-                            console.error('Error loading PDF: ' + reason);
-                            showMessage('Error loading PDF for preview', 'error');
-                        });
+                async function loadPDF(url) {
+                    return new Promise((resolve, reject) => {
+                        try {
+                            // Set worker source
+                            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                            // Load PDF document
+                            const loadingTask = pdfjsLib.getDocument({
+                                url: url,
+                                // Add options to help with iOS compatibility
+                                disableAutoFetch: false,
+                                disableStream: false,
+                                isEvalSupported: false
+                            });
+                            
+                            loadingTask
+                                .promise
+                                .then(function (pdf) {
+                                    pdfDoc = pdf;
+                                    // Update page count
+                                    const pageCountElement = document.getElementById('page_count');
+                                    if (pageCountElement) {
+                                        pageCountElement.textContent = pdf.numPages;
+                                    }
+                                    // Initial render
+                                    renderPage(pageNum);
+                                    resolve();
+                                })
+                                .catch(function (reason) {
+                                    console.error('Error loading PDF: ' + reason);
+                                    reject(reason);
+                                });
+                        } catch (error) {
+                            console.error('Error setting up PDF loading:', error);
+                            reject(error);
+                        }
+                    });
                 }
-
                 // Render page
                 function renderPage(num) {
                     pageRendering = true;
-
                     // Get page
                     pdfDoc
                         .getPage(num)
                         .then(function (page) {
                             const viewport = page.getViewport({scale: scale});
                             const canvas = document.getElementById('pdf-canvas');
+                            if (!canvas) {
+                                pageRendering = false;
+                                return;
+                            }
                             const context = canvas.getContext('2d');
                             canvas.height = viewport.height;
                             canvas.width = viewport.width;
-
                             // Render PDF page
                             const renderContext = {
                                 canvasContext: context,
                                 viewport: viewport
                             };
                             const renderTask = page.render(renderContext);
-
                             // Wait for rendering to finish
                             renderTask
                                 .promise
@@ -669,16 +634,22 @@
                                         renderPage(pageNumPending);
                                         pageNumPending = null;
                                     }
+                                })
+                                .catch(function (error) {
+                                    console.error('Error rendering page:', error);
+                                    pageRendering = false;
                                 });
+                        })
+                        .catch(function (error) {
+                            console.error('Error getting page:', error);
+                            pageRendering = false;
                         });
-
                     // Update page counter
                     const pageNumElement = document.getElementById('page_num');
                     if (pageNumElement) {
                         pageNumElement.textContent = num;
                     }
                 }
-
                 // Queue render page
                 function queueRenderPage(num) {
                     if (pageRendering) {
@@ -687,7 +658,6 @@
                         renderPage(num);
                     }
                 }
-
                 // Previous page
                 function onPrevPage() {
                     if (pageNum <= 1) {
@@ -696,7 +666,6 @@
                     pageNum--;
                     queueRenderPage(pageNum);
                 }
-
                 // Next page
                 function onNextPage() {
                     if (pageNum >= pdfDoc.numPages) {
@@ -705,7 +674,6 @@
                     pageNum++;
                     queueRenderPage(pageNum);
                 }
-
                 // Download unlocked PDF
                 downloadBtn.addEventListener('click', function () {
                     if (unlockedPdfBlob) {
@@ -725,7 +693,6 @@
                         URL.revokeObjectURL(url);
                     }
                 });
-
                 // Reset form
                 resetBtn.addEventListener('click', function () {
                     pdfFileInput.value = '';
@@ -749,14 +716,12 @@
                     pdfDoc = null;
                     pageNum = 1;
                 });
-
                 // Show message function
                 function showMessage(message, type) {
                     messageDiv.textContent = message;
                     messageDiv
                         .classList
                         .remove('hidden', 'bg-red-100', 'text-red-700', 'bg-green-100', 'text-green-700', 'bg-blue-100', 'text-blue-700');
-
                     if (type === 'error') {
                         messageDiv
                             .classList
@@ -770,7 +735,6 @@
                             .classList
                             .add('bg-blue-100', 'text-blue-700');
                     }
-
                     // Auto hide after 5 seconds
                     setTimeout(() => {
                         messageDiv
