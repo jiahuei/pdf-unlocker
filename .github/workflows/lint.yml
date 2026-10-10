@@ -53,3 +53,6 @@ jobs:
 
       - name: Check files using Prettier
         run: npm run format:check
+
+      - name: Verify Pages packaging and preview comments
+        run: node --test tests/pages-preview.test.cjs

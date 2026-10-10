@@ -8,3 +8,11 @@
 - [x] Update README, agent guidance and dated completion record; run applicable formatting and syntax checks.
 - [x] Review final diff and create the requested branch.
 - [x] Commit and open [PR #10](https://github.com/jiahuei/pdf-unlocker/pull/10).
+
+## Hosted pull-request previews
+
+- [x] Coordinate shared packaging/comment helpers and pinned Pages workflow.
+- [x] Preserve current-main production, package only src/ from same-repository PR snapshots, and remove closed previews.
+- [x] Verify artifact boundaries and deployment-success comment behavior.
+- [x] Update README/AGENTS guidance and dated verification record; run workflow checks.
+- [ ] Publish the workflow changes and verify hosted preview URLs before merge.

@@ -43,7 +43,7 @@ Internet access is required to load the browser libraries and Python packages. P
 
 ## Development and verification
 
-The deployed site is the `src/` directory. `index.html`, `style.css` and `app.js` define the interface; `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js’s main-thread fallback. `.github/workflows/deploy.yml` publishes `src/` to GitHub Pages on pushes to `main` or manual dispatch. There is no build step or runtime server.
+The deployed site is the `src/` directory. `index.html`, `style.css` and `app.js` define the interface; `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js’s main-thread fallback. There is no application build step or runtime server.
 
 Changing the selected file or password discards the previous result. Reset cancels queued UI work; download URLs, PDF workers and Python proxies are released when results are replaced. PDF contents and passwords are never submitted to a server. The libraries themselves load over the network. Optional Eruda debugging remains available through `?eruda=true` or the existing `active-eruda` local-storage flag.
 
@@ -77,6 +77,22 @@ uv tool run ruff@0.15.9 format --check .
 ```
 
 Use `npm run format` to format supported files, `uv tool run ruff@0.15.9 check --fix .` to sort Python imports/fix lint errors, and `uv tool run ruff@0.15.9 format .` to format Python. `.prettierrc` prevents inherited checkout settings; `.prettierignore` excludes generated files and local references. `ruff.toml` enables default lint rules plus import sorting and targets Python 3.11 for the browser's Pyodide runtime. Use `node --check src/app.js` for JavaScript syntax. Document tests use standard-library `unittest`; no pytest framework is required. The deployment workflow remains separate.
+
+## Production and pull-request previews
+
+`.github/workflows/deploy.yml` publishes a combined GitHub Pages artifact: the site's root always contains `src/` from the current remote `main`, and each open pull request from this repository appears at `pr-preview/<number>/`. Preview assets and PDF processing retain relative paths, so the preview operates beneath that directory.
+
+Main pushes, pull-request opening/reopening/updates/closure, and manual dispatch rebuild the artifact. Each run snapshots the current main commit and the exact head commits of all open same-repository pull requests. Fork pull requests are excluded. The packaging helper reads regular Git blobs under `src/`; it does not run pull-request build scripts or include repository documentation, tests or tooling. Closing a pull request removes its preview in the next successful deployment.
+
+After deployment succeeds, the workflow creates or updates one marked comment per open pull request with its preview URL and source commit. Closing a pull request updates its existing comment to say the preview was removed. Failed deployments do not post a ready link. Runs share the `pages` concurrency group without canceling an active deployment; a queued run can take time to publish.
+
+Repository Pages settings must use **GitHub Actions**. The `github-pages` environment must allow `main` and pull-request merge refs (`refs/pull/*/merge`) for these deployments. Deployment permissions and pull-request comment permissions are scoped to their respective jobs. The workflow uses the regular `pull_request` event rather than `pull_request_target`.
+
+`scripts/pages-preview.json` selects `src/`; `scripts/pages-preview.cjs` packages snapshots and maintains comments. Run the packaging and comment regressions without extra dependencies:
+
+```sh
+node --test tests/pages-preview.test.cjs
+```
 
 ## Browser Support
 

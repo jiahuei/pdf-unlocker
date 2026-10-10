@@ -15,13 +15,14 @@ The user's job as a senior software engineer is dependent on you implementing cl
 │   ├── pdf-engine.py         # Browser-local document decryption
 │   └── assets/               # Favicons, touch icons and web manifest
 ├── .github/workflows/
-│   ├── deploy.yml            # Publishes src/ to GitHub Pages
+│   ├── deploy.yml            # Publishes main and same-repository PR snapshots
 │   └── lint.yml              # Prettier and Ruff checks
 ├── .prettierrc               # Repository-local formatting defaults
 ├── .prettierignore           # Generated files and local reference exclusions
 ├── ruff.toml                 # Python lint/format settings targeting Python 3.11
 ├── package.json              # Pinned development-only Prettier and scripts
 ├── package-lock.json         # Reproducible npm installation
+├── scripts/                  # Static Pages packaging and preview comments
 ├── tests/                    # Python document and Playwright browser tests
 ├── tasks/                    # Dated completion records; plans when needed
 ├── AGENTS.md                 # Repository guidance
@@ -99,7 +100,9 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - `package.json` provides development-only formatting tooling; it does not add a build step or browser dependency. Follow [README.md](README.md#development-and-verification) for formatting setup, isolated document-test dependencies and the optional browser suite. Do not run test commands copied from another repository or claim unrun checks passed.
 - For application changes, run relevant Python and browser regressions using synthetic PDFs: correct and incorrect passwords, an unencrypted PDF, malformed input, preview pagination, download, reset and library-load failure as applicable. Verify downloaded PDF contents and encryption state rather than only a success message.
 - Inspect relevant desktop and mobile screenshots for layout changes. Distinguish browser mobile emulation from physical-device verification.
-- `.github/workflows/deploy.yml` uploads only `src/` and deploys on pushes to `main` or manual dispatch. Keep browser assets reachable beneath the GitHub Pages project path; pushing to `main` triggers deployment.
+- `.github/workflows/deploy.yml` publishes current remote `main` at the site root and each open same-repository pull request beneath `pr-preview/<number>/`. Only regular Git blobs from `src/` are packaged; do not execute pull-request scripts or include tooling/docs in the artifact. Fork previews are excluded. Keep all browser assets reachable beneath the project and preview paths.
+- Main pushes, relevant pull-request events and manual dispatch rebuild all snapshots. Preview comments are created/updated only after successful deployment; closing a pull request removes its preview and updates the existing comment. Preserve the shared `pages` concurrency group and its non-canceling behavior.
+- Run `node --test tests/pages-preview.test.cjs` for packaging/comment changes. Verify current-main production, immutable PR source commits, source boundaries, fork/close handling and comment idempotence. Hosted preview URLs and comments require a successful Actions deployment; do not claim local tests prove deployment.
 - Preserve the MIT license and attribution in `LICENSE`.
 
 Before reporting completion, review the final diff and ask:

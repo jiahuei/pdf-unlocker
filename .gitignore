@@ -42,6 +42,7 @@ venv/
 # JavaScript
 **/node_modules/
 **/logs
+/_site/
 
 # db related
 **/ch_data/
