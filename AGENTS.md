@@ -12,6 +12,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 │   ├── index.html            # Accessible browser interface
 │   ├── style.css             # Local responsive styling
 │   ├── app.js                # UI state, runtime loading and PDF preview
+│   ├── password-schemes.js   # Pure local statement password derivation
 │   ├── pdf-engine.py         # Browser-local document decryption
 │   └── assets/               # Favicons, touch icons and web manifest
 ├── .github/workflows/
@@ -99,6 +100,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - Runtime dependencies are Pyodide 0.23.4 with its micropip/cryptography packages, pypdf 4.3.1, and PDF.js 3.11.174 with its matching worker. Eruda 3.4.3 loads only when enabled. Styling is local. Inspect the source before changing dependency versions.
 - `package.json` provides development-only formatting tooling; it does not add a build step or browser dependency. Follow [README.md](README.md#development-and-verification) for formatting setup, isolated document-test dependencies and the optional browser suite. Do not run test commands copied from another repository or claim unrun checks passed.
 - For application changes, run relevant Python and browser regressions using synthetic PDFs: correct and incorrect passwords, an unencrypted PDF, malformed input, preview pagination, download, reset and library-load failure as applicable. Verify downloaded PDF contents and encryption state rather than only a success message.
+- Statement methods implement the documented RHB, TNG eWallet and Maybank formats; manual input remains verbatim with the existing blank-password default. Derive passwords only on explicit unlock, without storing/logging or displaying the generated value. Scheme/detail edits must cancel stale operations, and reset clears all method fields. Run `node --test tests/password-schemes.test.cjs` and real scheme-encrypted browser fixtures when changing these rules.
 - Inspect relevant desktop and mobile screenshots for layout changes. Distinguish browser mobile emulation from physical-device verification.
 - `.github/workflows/deploy.yml` publishes current remote `main` at the site root and each open same-repository pull request beneath `pr-preview/<number>/`. Only regular Git blobs from `src/` are packaged; do not execute pull-request scripts or include tooling/docs in the artifact. Fork previews are excluded. Keep all browser assets reachable beneath the project and preview paths.
 - Main pushes, relevant pull-request events and manual dispatch rebuild all snapshots. Preview comments are created/updated only after successful deployment; closing a pull request removes its preview and updates the existing comment. Preserve the shared `pages` concurrency group and its non-canceling behavior.
@@ -137,7 +139,7 @@ Before reporting completion, review the final diff and ask:
 ### 8. Linting Workflow
 
 - Run formatting, linting, and static analysis after implementation and before reporting completion.
-- `.github/workflows/lint.yml` is the source of truth: pushes to all branches run Prettier 3.8.3 with Node 24 and Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
+- `.github/workflows/lint.yml` is the source of truth: pushes to all branches run Prettier 3.8.3 and the Pages/password-method Node tests with Node 24, plus Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
 - Start with changed files for fast feedback, then run the repository-wide formatting check.
 - When editing or creating Markdown files, run the applicable formatting checks.
 

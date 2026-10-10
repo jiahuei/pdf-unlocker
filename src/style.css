@@ -25,7 +25,8 @@ body {
   line-height: 1.6;
 }
 button,
-input {
+input,
+select {
   font: inherit;
 }
 a {
@@ -137,39 +138,15 @@ button:focus-visible {
   max-width: 780px;
   margin-bottom: 36px;
 }
-.eyebrow {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  font-weight: 750;
-  color: var(--accent);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 18px;
-}
-.eyebrow:before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
 h1 {
   font-size: clamp(2.4rem, 4.8vw, 3.8rem);
   font-weight: 650;
   margin-bottom: 20px;
 }
-h1 span {
-  color: var(--accent);
-}
 .intro {
   max-width: 660px;
   color: var(--muted);
   font-size: 1rem;
-}
-.intro.small {
-  font-size: 0.9rem;
 }
 .trust-row {
   display: flex;
@@ -299,14 +276,32 @@ h1 span {
 .password-field {
   margin-top: 24px;
 }
+.password-details {
+  border: 0;
+  padding: 0;
+  margin: 22px 0 0;
+  min-width: 0;
+}
+.password-details legend {
+  font-size: 0.85rem;
+  font-weight: 650;
+  margin-bottom: 12px;
+  padding: 0;
+}
+.password-details .help + .field-label {
+  margin-top: 18px;
+}
 .password-wrap {
   position: relative;
 }
 input[type="password"],
-input[type="text"] {
+input[type="text"],
+input[type="date"],
+input[type="tel"],
+select {
   width: 100%;
   min-height: 48px;
-  padding: 12px 74px 12px 14px;
+  padding: 12px 14px;
   border: 1px solid #cdd3e3;
   background: #fcfcfe;
   border-radius: 9px;
@@ -314,7 +309,16 @@ input[type="text"] {
   font-size: 16px;
   outline: none;
 }
-input:focus {
+input[type="date"],
+select {
+  min-width: 0;
+  max-width: 100%;
+}
+.password-wrap input {
+  padding-right: 74px;
+}
+input:focus,
+select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px #465bd816;
 }
