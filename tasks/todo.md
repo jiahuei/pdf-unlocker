@@ -7,4 +7,4 @@
 - [x] Exercise browser/mobile upload, password visibility, pagination, download/reset, runtime failures and responsive layout; review screenshots.
 - [x] Update README, agent guidance and dated completion record; run applicable formatting and syntax checks.
 - [x] Review final diff and create the requested branch.
-- [ ] Commit and open the requested pull request.
+- [x] Commit and open [PR #10](https://github.com/jiahuei/pdf-unlocker/pull/10).

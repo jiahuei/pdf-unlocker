@@ -7,6 +7,8 @@
 - File/password changes and reset invalidate queued work and stale downloads. Result replacement releases Python proxies, preview tasks and owned download/worker URLs. Preview failures preserve successful downloads; PDF.js supports native workers and its main-thread fallback.
 - Added synthetic-document tests, real browser/runtime/download checks and separately controlled timing/failure regressions. Updated README and AGENTS.md with the actual architecture, runtime requirements and isolated test setup. The existing GitHub Pages deployment workflow is unchanged.
 
+- Committed the changes on `modernize-pdf-unlocker` and opened [PR #10](https://github.com/jiahuei/pdf-unlocker/pull/10).
+
 ## Verification
 
 - `PYTHONPATH=/tmp/pdf-unlocker-test-python python3 -m unittest discover -s tests -p 'test_*.py' -v`: passed 9 tests covering RC4/AES-128/AES-256 decryption, wrong/whitespace passwords, plaintext/malformed/zero-page inputs and document preservation. Expected malformed-PDF parser warnings were emitted.
