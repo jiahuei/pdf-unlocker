@@ -15,4 +15,4 @@
 - [x] Preserve current-main production, package only src/ from same-repository PR snapshots, and remove closed previews.
 - [x] Verify artifact boundaries and deployment-success comment behavior.
 - [x] Update README/AGENTS guidance and dated verification record; run workflow checks.
-- [ ] Publish the workflow changes and verify hosted preview URLs before merge.
+- [x] Publish the workflow changes and verify [the hosted PR #10 preview](https://jiahuei.github.io/pdf-unlocker/pr-preview/10/) before merge.
