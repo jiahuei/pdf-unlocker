@@ -23,4 +23,4 @@
 - [x] Replace marketing copy with direct instructions and verify accessible/mobile input states.
 - [x] Test date/phone/password rules, actual encrypted PDF downloads, stale work/reset and responsive layouts.
 - [x] Update documentation/completion record and run pinned formatting, Ruff and relevant regressions.
-- [ ] Commit, open a new pull request and verify its hosted preview before merge.
+- [x] Commit, open [PR #11](https://github.com/jiahuei/pdf-unlocker/pull/11) and verify [its hosted preview](https://jiahuei.github.io/pdf-unlocker/pr-preview/11/) before merge.
