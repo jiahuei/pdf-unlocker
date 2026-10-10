@@ -67,7 +67,16 @@ PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHON
 
 Run the server in a separate terminal. The browser suite downloads actual decrypted PDFs and independently checks their contents with pypdf. Separate controlled substitutes test asynchronous loading/read/render cancellation and preview failures. It also checks runtime loading failure/retry, validation, password visibility, pagination, responsive layouts and download cleanup. Internet access is required for the real browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from a physical iOS Safari check.
 
-Formatting currently has no committed configuration or CI lint workflow. To avoid inheriting an enclosing checkout's settings, use `npx prettier --write --no-config <changed-files>` and `npx prettier --check --no-config <changed-files>`. Use `node --check src/app.js` for JavaScript syntax. Python tests use standard-library `unittest`; no pytest framework is required.
+The push and pull-request workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
+
+```sh
+npm ci
+npm run format:check
+uv tool run ruff@0.15.9 check --output-format github .
+uv tool run ruff@0.15.9 format --check .
+```
+
+Use `npm run format` to format supported files, `uv tool run ruff@0.15.9 check --fix .` to sort Python imports/fix lint errors, and `uv tool run ruff@0.15.9 format .` to format Python. `.prettierrc` prevents inherited checkout settings; `.prettierignore` excludes generated files and local references. `ruff.toml` enables default lint rules plus import sorting and targets Python 3.11 for the browser's Pyodide runtime. Use `node --check src/app.js` for JavaScript syntax. Document tests use standard-library `unittest`; no pytest framework is required. The deployment workflow remains separate.
 
 ## Browser Support
 

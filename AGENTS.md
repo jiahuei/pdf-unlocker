@@ -15,7 +15,13 @@ The user's job as a senior software engineer is dependent on you implementing cl
 │   ├── pdf-engine.py         # Browser-local document decryption
 │   └── assets/               # Favicons, touch icons and web manifest
 ├── .github/workflows/
-│   └── deploy.yml            # Publishes src/ to GitHub Pages
+│   ├── deploy.yml            # Publishes src/ to GitHub Pages
+│   └── lint.yml              # Prettier and Ruff checks
+├── .prettierrc               # Repository-local formatting defaults
+├── .prettierignore           # Generated files and local reference exclusions
+├── ruff.toml                 # Python lint/format settings targeting Python 3.11
+├── package.json              # Pinned development-only Prettier and scripts
+├── package-lock.json         # Reproducible npm installation
 ├── tests/                    # Python document and Playwright browser tests
 ├── tasks/                    # Dated completion records; plans when needed
 ├── AGENTS.md                 # Repository guidance
@@ -90,7 +96,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - Serve the deployed directory from the repository root: `python3 -m http.server 8000 --bind 127.0.0.1 --directory src`, then open `http://127.0.0.1:8000`.
 - Internet access is needed to load CDN dependencies and Python packages. File contents and passwords are processed in the browser; do not add document or password uploads.
 - Runtime dependencies are Pyodide 0.23.4 with its micropip/cryptography packages, pypdf 4.3.1, and PDF.js 3.11.174 with its matching worker. Eruda 3.4.3 loads only when enabled. Styling is local. Inspect the source before changing dependency versions.
-- There is no package manifest. Follow [README.md](README.md#development-and-verification) for isolated test dependencies, Python document tests and the optional browser suite. Do not run test commands copied from another repository or claim unrun checks passed.
+- `package.json` provides development-only formatting tooling; it does not add a build step or browser dependency. Follow [README.md](README.md#development-and-verification) for formatting setup, isolated document-test dependencies and the optional browser suite. Do not run test commands copied from another repository or claim unrun checks passed.
 - For application changes, run relevant Python and browser regressions using synthetic PDFs: correct and incorrect passwords, an unencrypted PDF, malformed input, preview pagination, download, reset and library-load failure as applicable. Verify downloaded PDF contents and encryption state rather than only a success message.
 - Inspect relevant desktop and mobile screenshots for layout changes. Distinguish browser mobile emulation from physical-device verification.
 - `.github/workflows/deploy.yml` uploads only `src/` and deploys on pushes to `main` or manual dispatch. Keep browser assets reachable beneath the GitHub Pages project path; pushing to `main` triggers deployment.
@@ -128,7 +134,7 @@ Before reporting completion, review the final diff and ask:
 ### 8. Linting Workflow
 
 - Run formatting, linting, and static analysis after implementation and before reporting completion.
-- This repository currently has no committed formatter configuration, package-defined lint commands or CI lint workflow. `.github/workflows/deploy.yml` deploys the site without lint or test steps. Inspect any tooling added later before selecting checks.
+- `.github/workflows/lint.yml` is the source of truth: push and pull-request checks run Prettier 3.8.3 with Node 24 and Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
 - Start with changed files for fast feedback, then run the repository-wide formatting check.
 - When editing or creating Markdown files, run the applicable formatting checks.
 
@@ -136,9 +142,9 @@ Always run `npx prettier` commands with escalated permissions on the first attem
 
 From the repository root:
 
-1. If using Prettier for changed supported files, run `npx prettier --write --no-config <changed-files>`; do not inherit configuration from an enclosing checkout.
-2. Check those files with `npx prettier --check --no-config <changed-files>`.
-3. Check repository-wide formatting with `npx prettier --check --no-config .`, distinguishing existing formatting differences from new ones.
+1. Install the locked development dependency with `npm ci`. Use `npm exec -- prettier --write <changed-files>` for targeted formatting.
+2. Check changed supported files with `npm exec -- prettier --check <changed-files>`, then run the workflow's `npm run format:check`. `npm run format` formats the repository when establishing or updating its formatting baseline.
+3. Use `uv tool run ruff@0.15.9 check --fix .` and `uv tool run ruff@0.15.9 format .` to fix Python lint/formatting differences. Run the exact workflow checks: `uv tool run ruff@0.15.9 check --output-format github .` and `uv tool run ruff@0.15.9 format --check .`.
 4. For JavaScript changes, run `node --check <changed-javascript-file>`. For Python changes, run the relevant document tests without assuming a local interpreter proves Pyodide runtime behavior.
 5. Verify affected browser behavior as described above, and run any relevant automated tests added to the repository. Documentation-only changes do not require application tests.
 

@@ -5,11 +5,19 @@
   },
   "TIME": {
     "prefix": "tt",
-    "body": ["from time import perf_counter", "t0 = perf_counter()", "$0", "print(f\"t={(perf_counter() - t0) * 1e3:,.2f} ms\")"],
+    "body": [
+      "from time import perf_counter",
+      "t0 = perf_counter()",
+      "$0",
+      "print(f\"t={(perf_counter() - t0) * 1e3:,.2f} ms\")",
+    ],
   },
   "TYPING_IMPORTS": {
     "prefix": "typ",
-    "body": ["from __future__ import annotations", "from typing import TypeVar, Type, Optional, Union, Any, List, Dict, Tuple"],
+    "body": [
+      "from __future__ import annotations",
+      "from typing import TypeVar, Type, Optional, Union, Any, List, Dict, Tuple",
+    ],
   },
   "GET_LOGGER": {
     "prefix": "lgg",
@@ -21,7 +29,10 @@
   },
   "CURRENT_DIRECTORY": {
     "prefix": "cdd",
-    "body": ["from pathlib import Path", "CURR_DIR = Path(__file__).resolve().parent"],
+    "body": [
+      "from pathlib import Path",
+      "CURR_DIR = Path(__file__).resolve().parent",
+    ],
   },
   "TF_GRAPH_BOILERPLATE": {
     "prefix": "tgg",
@@ -42,10 +53,17 @@
   },
   "TF_WARNING_SUPPRESS": {
     "prefix": "tww",
-    "body": ["os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"1\"", "tf.get_logger().setLevel(\"ERROR\")", "$0"],
+    "body": [
+      "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"1\"",
+      "tf.get_logger().setLevel(\"ERROR\")",
+      "$0",
+    ],
   },
   "CUDA_VISIBLE_DEVICES": {
     "prefix": "cuda",
-    "body": ["os.environ[\"CUDA_DEVICE_ORDER\"] = \"PCI_BUS_ID\"", "os.environ[\"CUDA_VISIBLE_DEVICES\"] = \"$0\""],
+    "body": [
+      "os.environ[\"CUDA_DEVICE_ORDER\"] = \"PCI_BUS_ID\"",
+      "os.environ[\"CUDA_VISIBLE_DEVICES\"] = \"$0\"",
+    ],
   },
 }
