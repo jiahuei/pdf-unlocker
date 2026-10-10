@@ -6,7 +6,7 @@
       "source.organizeImports": "explicit"
     }
   },
-  "ruff.configuration": "services/api/pyproject.toml",
+  "ruff.configuration": "ruff.toml",
   "ruff.importStrategy": "fromEnvironment",
   "ruff.nativeServer": "on",
   "[markdown]": {

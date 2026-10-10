@@ -1,0 +1,10 @@
+# Local dependencies and generated Python files
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+_site/
+
+# Local reference checkouts
+__ref__/
