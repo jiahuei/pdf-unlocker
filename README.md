@@ -15,24 +15,59 @@ Unlock password-protected PDF files right in your browser!
 ## How to Use
 
 1. Upload a password-protected PDF file
-2. Enter the PDF password
-3. Click "Unlock PDF"
-4. Preview and download the unlocked file
+2. Enter the PDF password. Leave it empty to use the default `password`; nonblank passwords are used exactly as entered, including surrounding spaces.
+3. Click "Unlock PDF". The first operation may wait for the processing libraries to finish loading.
+4. Preview the pages and download the unlocked file. A preview failure does not prevent downloading a successfully processed PDF. Use "Start over" to clear the document and password.
 
 ## Running Locally
 
 1. Clone this repository
-2. Open `index.html` in your web browser
-3. No additional setup required!
+2. From the repository root, serve the application directory:
+
+   ```sh
+   python3 -m http.server 8000 --bind 127.0.0.1 --directory src
+   ```
+
+3. Open <http://127.0.0.1:8000>.
+
+Internet access is required to load the browser libraries and Python packages. PDF contents and passwords are processed locally in your browser.
 
 ## Technology Stack
 
 - HTML5
-- Tailwind CSS
+- Local CSS (no styling CDN required)
 - JavaScript
-- Pyodide (Python in the browser)
-- PDF.js
-- pypdf (Python library)
+- Pyodide 0.23.4 (Python in the browser), with its cryptography package for AES PDFs
+- PDF.js 3.11.174 for page previews
+- pypdf 4.3.1 installed through micropip
+
+## Development and verification
+
+The deployed site is the `src/` directory. `index.html`, `style.css` and `app.js` define the interface; `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js’s main-thread fallback. `.github/workflows/deploy.yml` publishes `src/` to GitHub Pages on pushes to `main` or manual dispatch. There is no build step or runtime server.
+
+Changing the selected file or password discards the previous result. Reset cancels queued UI work; download URLs, PDF workers and Python proxies are released when results are replaced. PDF contents and passwords are never submitted to a server. The libraries themselves load over the network. Optional Eruda debugging remains available through `?eruda=true` or the existing `active-eruda` local-storage flag.
+
+Tests use synthetic documents and keep their dependencies outside the project:
+
+```sh
+python3 -m pip install --target /tmp/pdf-unlocker-test-python pypdf==4.3.1 cryptography==43.0.3
+PYTHONPATH=/tmp/pdf-unlocker-test-python python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The document tests verify RC4, AES-128 and AES-256 password removal, incorrect and whitespace passwords, malformed/plain documents, and preserved text, metadata, outlines, attachments and form fields.
+
+For browser tests, start the local server on port 8001, then install the optional tooling:
+
+```sh
+python3 -m http.server 8001 --bind 127.0.0.1 --directory src
+npm install --prefix /tmp/pdf-unlocker-browser-tests playwright@1.58.2
+/tmp/pdf-unlocker-browser-tests/node_modules/.bin/playwright install chromium
+PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/browser.test.cjs
+```
+
+Run the server in a separate terminal. The browser suite downloads actual decrypted PDFs and independently checks their contents with pypdf. Separate controlled substitutes test asynchronous loading/read/render cancellation and preview failures. It also checks runtime loading failure/retry, validation, password visibility, pagination, responsive layouts and download cleanup. Internet access is required for the real browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from a physical iOS Safari check.
+
+Formatting currently has no committed configuration or CI lint workflow. To avoid inheriting an enclosing checkout's settings, use `npx prettier --write --no-config <changed-files>` and `npx prettier --check --no-config <changed-files>`. Use `node --check src/app.js` for JavaScript syntax. Python tests use standard-library `unittest`; no pytest framework is required.
 
 ## Browser Support
 
