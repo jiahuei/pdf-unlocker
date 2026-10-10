@@ -67,7 +67,7 @@ PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHON
 
 Run the server in a separate terminal. The browser suite downloads actual decrypted PDFs and independently checks their contents with pypdf. Separate controlled substitutes test asynchronous loading/read/render cancellation and preview failures. It also checks runtime loading failure/retry, validation, password visibility, pagination, responsive layouts and download cleanup. Internet access is required for the real browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from a physical iOS Safari check.
 
-The push and pull-request workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
+The push workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12 for all branches. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
 
 ```sh
 npm ci

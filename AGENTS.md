@@ -137,7 +137,7 @@ Before reporting completion, review the final diff and ask:
 ### 8. Linting Workflow
 
 - Run formatting, linting, and static analysis after implementation and before reporting completion.
-- `.github/workflows/lint.yml` is the source of truth: push and pull-request checks run Prettier 3.8.3 with Node 24 and Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
+- `.github/workflows/lint.yml` is the source of truth: pushes to all branches run Prettier 3.8.3 with Node 24 and Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
 - Start with changed files for fast feedback, then run the repository-wide formatting check.
 - When editing or creating Markdown files, run the applicable formatting checks.
 
