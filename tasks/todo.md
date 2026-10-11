@@ -16,3 +16,11 @@
 - [x] Verify artifact boundaries and deployment-success comment behavior.
 - [x] Update README/AGENTS guidance and dated verification record; run workflow checks.
 - [x] Publish the workflow changes and verify [the hosted PR #10 preview](https://jiahuei.github.io/pdf-unlocker/pr-preview/10/) before merge.
+
+## Statement password methods
+
+- [x] Add locally derived RHB, TNG eWallet and Maybank passwords with validated fields and manual entry preserved.
+- [x] Replace marketing copy with direct instructions and verify accessible/mobile input states.
+- [x] Test date/phone/password rules, actual encrypted PDF downloads, stale work/reset and responsive layouts.
+- [x] Update documentation/completion record and run pinned formatting, Ruff and relevant regressions.
+- [x] Commit, open [PR #11](https://github.com/jiahuei/pdf-unlocker/pull/11) and verify [its hosted preview](https://jiahuei.github.io/pdf-unlocker/pr-preview/11/) before merge.

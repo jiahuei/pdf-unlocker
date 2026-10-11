@@ -82,6 +82,9 @@ def write_fixtures(directory):
         ("whitespace.pdf", "  secret  ", "RC4-128"),
         ("aes128.pdf", "secret", "AES-128"),
         ("aes256.pdf", "secret", "AES-256"),
+        ("rhb.pdf", "789A810729", "AES-256"),
+        ("tng.pdf", "1123456789", "AES-256"),
+        ("maybank.pdf", "01Jan1980", "AES-256"),
     ]:
         (directory / name).write_bytes(document_bytes(password, algorithm))
     (directory / "malformed.pdf").write_bytes(

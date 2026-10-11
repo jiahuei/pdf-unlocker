@@ -1,8 +1,8 @@
 # PDF Unlocker
 
-Unlock password-protected PDF files right in your browser!
+Remove a PDF password in your browser, preview its pages and download the unlocked copy.
 
-[Try the live demo !!!](https://jiahuei.github.io/pdf-unlocker/)
+[Open PDF Unlocker](https://jiahuei.github.io/pdf-unlocker/)
 
 ## Features
 
@@ -15,9 +15,21 @@ Unlock password-protected PDF files right in your browser!
 ## How to Use
 
 1. Upload a password-protected PDF file
-2. Enter the PDF password. Leave it empty to use the default `password`; nonblank passwords are used exactly as entered, including surrounding spaces.
+2. Select a password method. Enter the PDF password manually or provide the statement details for RHB, TNG eWallet or Maybank. Manual entry uses the default `password` when empty; nonblank manual passwords are used exactly as entered, including surrounding spaces.
 3. Click "Unlock PDF". The first operation may wait for the processing libraries to finish loading.
 4. Preview the pages and download the unlocked file. A preview failure does not prevent downloading a successfully processed PDF. Use "Start over" to clear the document and password.
+
+## Statement password methods
+
+Choose the method specified by your statement's password instructions. These methods apply the following rules; use manual entry for other passwords, including a Maybank password chosen during registration.
+
+| Method      | Details and format                                                                                                                                                                                                            | Example                                |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| RHB         | Last four ID/business registration characters, preserving case, followed by birth/establishment date in `YYMMDD`. Only the suffix is requested.                                                                               | `789A` and 29 July 1981 → `789A810729` |
+| TNG eWallet | Registered Malaysian mobile number with phone separators, country code and the local leading zero removed. Local, bare, `+60` and `0060` forms are accepted; letters, foreign country codes and invalid lengths are rejected. | `+6011-23456789` → `1123456789`        |
+| Maybank     | Birth date as `ddMmmYYYY`, using English month abbreviations.                                                                                                                                                                 | 1 January 1980 → `01Jan1980`           |
+
+Passwords are derived locally only when you select Unlock PDF. The generated value is not displayed, stored or logged. Changing a password method or its details discards earlier results and cancels queued work. Start over clears every field and restores manual entry.
 
 ## Running Locally
 
@@ -43,7 +55,7 @@ Internet access is required to load the browser libraries and Python packages. P
 
 ## Development and verification
 
-The deployed site is the `src/` directory. `index.html`, `style.css` and `app.js` define the interface; `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js’s main-thread fallback. There is no application build step or runtime server.
+The deployed site is the `src/` directory. `index.html`, `style.css` and `app.js` define the interface; `password-schemes.js` validates and derives statement passwords without network or storage access. `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js’s main-thread fallback. There is no application build step or runtime server.
 
 Changing the selected file or password discards the previous result. Reset cancels queued UI work; download URLs, PDF workers and Python proxies are released when results are replaced. PDF contents and passwords are never submitted to a server. The libraries themselves load over the network. Optional Eruda debugging remains available through `?eruda=true` or the existing `active-eruda` local-storage flag.
 
@@ -72,11 +84,12 @@ The push workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 an
 ```sh
 npm ci
 npm run format:check
+node --test tests/pages-preview.test.cjs tests/password-schemes.test.cjs
 uv tool run ruff@0.15.9 check --output-format github .
 uv tool run ruff@0.15.9 format --check .
 ```
 
-Use `npm run format` to format supported files, `uv tool run ruff@0.15.9 check --fix .` to sort Python imports/fix lint errors, and `uv tool run ruff@0.15.9 format .` to format Python. `.prettierrc` prevents inherited checkout settings; `.prettierignore` excludes generated files and local references. `ruff.toml` enables default lint rules plus import sorting and targets Python 3.11 for the browser's Pyodide runtime. Use `node --check src/app.js` for JavaScript syntax. Document tests use standard-library `unittest`; no pytest framework is required. The deployment workflow remains separate.
+Use `npm run format` to format supported files, `uv tool run ruff@0.15.9 check --fix .` to sort Python imports/fix lint errors, and `uv tool run ruff@0.15.9 format .` to format Python. `.prettierrc` prevents inherited checkout settings; `.prettierignore` excludes generated files and local references. `ruff.toml` enables default lint rules plus import sorting and targets Python 3.11 for the browser's Pyodide runtime. Use `node --check src/app.js` and `node --check src/password-schemes.js` for JavaScript syntax. Document tests use standard-library `unittest`; no pytest framework is required. The Node suite covers statement formats, calendar/phone validation and Pages snapshots/comments; the browser suite also verifies real encrypted downloads for each statement method. The deployment workflow remains separate.
 
 ## Production and pull-request previews
 

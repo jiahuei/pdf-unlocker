@@ -46,7 +46,14 @@ async function noOverflow(page, check) {
 /** Ensures success downloads decrypt in the real browser and preserve their document contents. */
 async function unlockAndDownload(page, name, password, outputName = name) {
   await page.locator("#pdfFile").setInputFiles(path.join(fixtures, name));
-  await page.locator("#password").fill(password);
+  if (typeof password === "string") {
+    await page.locator("#passwordScheme").selectOption("manual");
+    await page.locator("#password").fill(password);
+  } else {
+    await page.locator("#passwordScheme").selectOption(password.scheme);
+    for (const [id, value] of Object.entries(password.fields))
+      await page.locator(`#${id}`).fill(value);
+  }
   await page.locator("#unlockBtn").click();
   await page
     .locator("#pdfActions")
@@ -342,6 +349,76 @@ async function controlledPage(browser, options = {}) {
     await page.evaluate(() => {
       window.Worker = window.originalWorker;
     });
+    // Supplied bank/eWallet rules decrypt independently generated AES fixtures in the real runtime.
+    for (const [name, details] of [
+      [
+        "rhb.pdf",
+        { scheme: "rhb", fields: { rhbSuffix: "789A", rhbDate: "1981-07-29" } },
+      ],
+      ["tng.pdf", { scheme: "tng", fields: { tngMobile: "+6011-23456789" } }],
+      [
+        "maybank.pdf",
+        { scheme: "maybank", fields: { maybankDate: "1980-01-01" } },
+      ],
+    ]) {
+      await unlockAndDownload(page, name, details);
+      real(
+        !(await page.locator("#password").isVisible()),
+        `${details.scheme}: derived password is not exposed in manual input`,
+      );
+      for (const width of [320, 375, 768, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.waitForFunction(() => {
+          const canvas = document.getElementById("pdfCanvas");
+          const frame = document.getElementById("pdfPreview");
+          return (
+            frame.getAttribute("aria-busy") === "false" &&
+            Math.abs(
+              parseFloat(canvas.style.width) - (frame.clientWidth - 38),
+            ) < 1
+          );
+        });
+        await noOverflow(page, real);
+        if (screenshotDir && [375, 1440].includes(width))
+          await page.screenshot({
+            path: path.join(screenshotDir, `${width}-${details.scheme}.png`),
+            fullPage: true,
+          });
+      }
+      const field = Object.keys(details.fields)[0];
+      await page.setViewportSize({ width: 375, height: 1000 });
+      await page
+        .locator(`#${field}`)
+        .fill(details.fields[field] + (field.endsWith("Date") ? "" : "0"));
+      if (field.endsWith("Date"))
+        await page.locator(`#${field}`).fill("1980-01-02");
+      real(
+        !(await page.locator("#pdfActions").isVisible()),
+        `${details.scheme}: editing details discards download`,
+      );
+      await page.locator(`#${field}`).tap();
+      real(
+        await page.evaluate((id) => document.activeElement.id === id, field),
+        `${details.scheme}: mobile field can receive focus`,
+      );
+    }
+    await page.locator("#passwordScheme").selectOption("tng");
+    await page.locator("#tngMobile").fill("01123456789abc");
+    await page.locator("#unlockBtn").click();
+    real(
+      (await page.locator("#tngMobile").getAttribute("aria-invalid")) ===
+        "true",
+      "invalid mobile number is associated with its field",
+    );
+    real(
+      await page.evaluate(() => document.activeElement.id === "tngMobile"),
+      "invalid scheme input receives focus",
+    );
+    real(
+      !(await page.locator("#pdfActions").isVisible()),
+      "invalid scheme details produce no download",
+    );
+    await page.locator("#passwordScheme").selectOption("manual");
     await page
       .locator("#pdfFile")
       .setInputFiles(path.join(fixtures, "malformed.pdf"));
@@ -419,6 +496,15 @@ async function controlledPage(browser, options = {}) {
       "reset clears results",
     );
     real(
+      (await page.locator("#passwordScheme").inputValue()) === "manual",
+      "reset restores manual method",
+    );
+    for (const id of ["rhbSuffix", "rhbDate", "tngMobile", "maybankDate"])
+      real(
+        (await page.locator(`#${id}`).inputValue()) === "",
+        `reset clears ${id}`,
+      );
+    real(
       await page.evaluate(() => window.urls.created === window.urls.revoked),
       "reset releases all owned result URLs",
     );
@@ -436,6 +522,40 @@ async function controlledPage(browser, options = {}) {
     await context.close();
 
     // These controlled tests exercise UI timing only; real decryption is covered above.
+    for (const change of ["scheme", "details"]) {
+      const { page, context } = await controlledPage(browser, {
+        delayLoad: true,
+      });
+      await page
+        .locator("#pdfFile")
+        .setInputFiles(path.join(fixtures, "rhb.pdf"));
+      await page.locator("#passwordScheme").selectOption("rhb");
+      await page.locator("#rhbSuffix").fill("789A");
+      await page.locator("#rhbDate").fill("1981-07-29");
+      await page.locator("#unlockBtn").tap();
+      await page.waitForFunction(() => window.mock.loadWaiting);
+      if (change === "scheme")
+        await page.locator("#passwordScheme").selectOption("maybank");
+      else await page.locator("#rhbSuffix").fill("789B");
+      await page.evaluate(() => window.mock.releaseLoad());
+      await page.waitForFunction(
+        () =>
+          document.getElementById("runtimeStatus").dataset.state === "ready",
+      );
+      mocked(
+        await page.evaluate(() => window.mock.decryptCalls === 0),
+        `${change}: change cancels queued derived password`,
+      );
+      mocked(
+        !(await page.locator("#pdfActions").isVisible()),
+        `${change}: old work cannot restore result`,
+      );
+      mocked(
+        !(await page.locator("#unlockBtn").isDisabled()),
+        `${change}: next unlock stays available`,
+      );
+      await context.close();
+    }
     for (const type of ["delayLoad", "delayRead", "delayRender"]) {
       const { page, context } = await controlledPage(browser, { [type]: true });
       if (type !== "delayLoad")

@@ -128,7 +128,7 @@ function clearResult() {
   el("previewEmpty").hidden = false;
   el("previewHint").textContent =
     "Unlock your document to preview its pages here.";
-  el("previewBadge").textContent = "Ready when you are";
+  el("previewBadge").textContent = "No preview yet";
   el("pdfPreview").setAttribute("aria-busy", "false");
   el("message").hidden = true;
   currentPage = 1;
@@ -278,8 +278,18 @@ el("unlockForm").addEventListener("submit", async (event) => {
   clearResult();
   const token = operation,
     file = selectedFile;
-  const entered = el("password").value;
-  const password = entered.trim() ? entered : "password";
+  let password;
+  try {
+    password = StatementPasswords.derivePassword(
+      el("passwordScheme").value,
+      Object.fromEntries(passwordInputs.map((id) => [id, el(id).value])),
+    );
+  } catch (error) {
+    el(error.field).setAttribute("aria-invalid", "true");
+    el(error.field).focus();
+    showMessage(error.message, "error");
+    return;
+  }
   setBusy(true);
   showMessage(
     engineReady
@@ -332,7 +342,27 @@ el("unlockForm").addEventListener("submit", async (event) => {
 el("pdfFile").addEventListener("change", () =>
   chooseFile(el("pdfFile").files[0]),
 );
-el("password").addEventListener("input", clearResult);
+const passwordInputs = [
+  "password",
+  "rhbSuffix",
+  "rhbDate",
+  "tngMobile",
+  "maybankDate",
+];
+for (const id of passwordInputs)
+  el(id).addEventListener("input", () => {
+    el(id).removeAttribute("aria-invalid");
+    clearResult();
+  });
+function updatePasswordFields() {
+  for (const scheme of ["manual", "rhb", "tng", "maybank"]) {
+    const fields = el(`${scheme}Fields`);
+    fields.hidden = fields.disabled = scheme !== el("passwordScheme").value;
+  }
+  for (const id of passwordInputs) el(id).removeAttribute("aria-invalid");
+  clearResult();
+}
+el("passwordScheme").addEventListener("change", updatePasswordFields);
 el("togglePassword").addEventListener("click", () => {
   const visible = el("password").type === "password";
   el("password").type = visible ? "text" : "password";
@@ -345,6 +375,7 @@ el("togglePassword").addEventListener("click", () => {
 });
 el("resetBtn").addEventListener("click", () => {
   el("unlockForm").reset();
+  updatePasswordFields();
   chooseFile(null);
   el("password").type = "password";
   el("togglePassword").textContent = "Show";
