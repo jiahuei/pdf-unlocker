@@ -314,6 +314,13 @@ select {
   min-width: 0;
   max-width: 100%;
 }
+/* WebKit keeps temporal inputs at their intrinsic size and forces content-box while they use the
+   native appearance, so width: 100% plus the padding and border below pushed the RHB and Maybank
+   date fields past the card edge. Opting out applies the declared width and the site-wide
+   border-box, and leaves the picker and its calendar icon intact. */
+input[type="date"] {
+  appearance: none;
+}
 .password-wrap input {
   padding-right: 74px;
 }

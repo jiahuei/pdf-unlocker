@@ -13,6 +13,7 @@ const downloads = fs.mkdtempSync(
   path.join(os.tmpdir(), "pdf-unlocker-downloads-"),
 );
 const screenshotDir = process.env.TEST_SCREENSHOTS;
+const defaultStatementDate = "1993-11-01";
 let realChecks = 0,
   mockedChecks = 0;
 const real = (condition, message) => {
@@ -41,6 +42,32 @@ async function noOverflow(page, check) {
   check(
     Math.max(...dimensions.slice(1)) <= dimensions[0] + 1,
     `No overflow: ${dimensions}`,
+  );
+}
+/** Ensures a statement date field keeps its declared width inside its card, the WebKit intrinsic-sizing regression. */
+async function dateFieldInsideCard(page, check, id) {
+  const box = await page.locator(`#${id}`).evaluate((field) => {
+    const style = getComputedStyle(field);
+    const rect = field.getBoundingClientRect();
+    const card = field.closest(".panel").getBoundingClientRect();
+    return {
+      appearance: style.appearance,
+      boxSizing: style.boxSizing,
+      leftInset: +(rect.left - card.left).toFixed(1),
+      rightInset: +(card.right - rect.right).toFixed(1),
+    };
+  });
+  check(
+    box.appearance === "none",
+    `${id}: native appearance is opted out so the declared width applies in WebKit`,
+  );
+  check(
+    box.boxSizing === "border-box",
+    `${id}: padding and border stay inside the declared width`,
+  );
+  check(
+    box.leftInset >= 0 && box.rightInset >= 0,
+    `${id}: stays inside its card: ${JSON.stringify(box)}`,
   );
 }
 /** Ensures success downloads decrypt in the real browser and preserve their document contents. */
@@ -379,6 +406,8 @@ async function controlledPage(browser, options = {}) {
           );
         });
         await noOverflow(page, real);
+        for (const id of Object.keys(details.fields))
+          if (id.endsWith("Date")) await dateFieldInsideCard(page, real, id);
         if (screenshotDir && [375, 1440].includes(width))
           await page.screenshot({
             path: path.join(screenshotDir, `${width}-${details.scheme}.png`),
@@ -499,10 +528,16 @@ async function controlledPage(browser, options = {}) {
       (await page.locator("#passwordScheme").inputValue()) === "manual",
       "reset restores manual method",
     );
-    for (const id of ["rhbSuffix", "rhbDate", "tngMobile", "maybankDate"])
+    // Reset restores each control's HTML default value, which pins the prefilled statement dates.
+    for (const [id, value] of [
+      ["rhbSuffix", ""],
+      ["rhbDate", defaultStatementDate],
+      ["tngMobile", ""],
+      ["maybankDate", defaultStatementDate],
+    ])
       real(
-        (await page.locator(`#${id}`).inputValue()) === "",
-        `reset clears ${id}`,
+        (await page.locator(`#${id}`).inputValue()) === value,
+        `reset restores ${id} to its default`,
       );
     real(
       await page.evaluate(() => window.urls.created === window.urls.revoked),
