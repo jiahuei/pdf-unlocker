@@ -29,7 +29,7 @@ Choose the method specified by your statement's password instructions. These met
 | TNG eWallet | Registered Malaysian mobile number with phone separators, country code and the local leading zero removed. Local, bare, `+60` and `0060` forms are accepted; letters, foreign country codes and invalid lengths are rejected. | `+6011-23456789` → `1123456789`        |
 | Maybank     | Birth date as `ddMmmYYYY`, using English month abbreviations.                                                                                                                                                                 | 1 January 1980 → `01Jan1980`           |
 
-Passwords are derived locally only when you select Unlock PDF. The generated value is not displayed, stored or logged. Changing a password method or its details discards earlier results and cancels queued work. Start over clears every field and restores manual entry.
+Passwords are derived locally only when you select Unlock PDF. The generated value is not displayed, stored or logged. The RHB and Maybank date fields start at 1 November 1993, so change them to the date on your statement before unlocking. Changing a password method or its details discards earlier results and cancels queued work. Start over clears the document and your entered details, restores that date default and returns to manual entry.
 
 ## Running Locally
 

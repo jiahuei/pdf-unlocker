@@ -1,4 +1,4 @@
-# Fix RHB and Maybank date field overflow in WebKit
+# Fix statement date field overflow and prefill both statement dates
 
 ## Summary
 
@@ -6,6 +6,7 @@
 - The existing `min-width: 0; max-width: 100%` rule could not prevent this, because both constrain the content box, which is what WebKit sized to 100% of the container before padding and border were added. The text, tel and password statement fields were unaffected; this WebKit sizing applies to temporal inputs.
 - The native picker stays usable. Opting out of the appearance changes how the control is painted and sized, not its functionality, and the calendar indicator is a separate shadow element. Chromium shadow-box measurements through CDP were identical before and after at 320px: input border box 41 to 279, datetime edit 56 to 244, picker indicator 244 to 264.
 - Added a browser regression that pins the computed `appearance` and `box-sizing` of each visible statement date field and asserts its border box stays inside its card at 320, 375, 768 and 1440 pixels for the RHB and Maybank methods. It runs inside the existing per-method layout loop, so it covers the derived-password paths that already unlock real AES fixtures.
+- Both statement date fields now open on 1 November 1993 through their HTML `value`, and Start over restores that date because `form.reset()` returns every control to its default value. The default is a convenience only: the value stays editable, is still validated by the same calendar rules, and is derived locally on unlock like any other entry. The reset regression now asserts each method field's default, which pins the prefilled date, and README and AGENTS.md document the default and that reset restores it.
 
 ## Verification
 
@@ -15,6 +16,8 @@
 - `uv tool run ruff@0.15.9 check --output-format github .`: passed with no findings. `uv tool run ruff@0.15.9 format --check .`: passed, four Python files already formatted. No Python changed.
 - `node --check tests/browser.test.cjs`: passed.
 - `git diff --check`: passed. The diff touches only the CSS rule with its explanatory comment and the new browser regression.
+- After adding the prefilled dates, the full suite was rerun: `LD_LIBRARY_PATH=/tmp/finance-browser-libs/extracted/usr/lib/x86_64-linux-gnu PLAYWRIGHT_MODULE=/tmp/ringgit-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python TEST_BASE_URL=http://127.0.0.1:8001 TEST_SCREENSHOTS=/tmp/pdfu-shots3 node tests/browser.test.cjs` passed the same 143 real and 25 controlled assertions, now including `reset restores rhbDate to its default` and `reset restores maybankDate to its default`, with RHB, TNG and Maybank fixtures still unlocked by explicitly entered details and verified by pypdf.
+- `npm exec -- prettier --write src/index.html tests/browser.test.cjs README.md AGENTS.md tasks/2026-10-11-statement-date-field-width-and-default.md` reported every file already formatted; `npm run format:check`, both `uv tool run ruff@0.15.9` checks and `node --check tests/browser.test.cjs` passed again after that change. No Python changed.
 - WebKit could not be run here: Playwright's Linux WebKit needs GTK 4, GStreamer and related libraries that cannot be installed without root, and iOS Safari uses its own temporal-input UI. The fix therefore rests on documented WebKit temporal-input sizing, on the unchanged Chromium measurements above, and still needs confirmation on a physical iPhone through the pull request's hosted preview.
 - `gh pr checks 12`: the Prettier, Python lint, build, deploy and comment jobs all passed.
 - [PR #12](https://github.com/jiahuei/pdf-unlocker/pull/12) was published at commit `ec277c4`. A temporary Playwright smoke script against [its hosted preview](https://jiahuei.github.io/pdf-unlocker/pr-preview/12/) passed 30 assertions at 320, 375 and 1440 pixels: the deployed RHB and Maybank date fields report `appearance: none` and `box-sizing: border-box`, keep the 48px field height, stay inside their card and leave the page without horizontal overflow. This confirms the deployed stylesheet in Chromium; it is not iOS Safari, so the device confirmation above is still outstanding.

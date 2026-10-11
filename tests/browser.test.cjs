@@ -13,6 +13,7 @@ const downloads = fs.mkdtempSync(
   path.join(os.tmpdir(), "pdf-unlocker-downloads-"),
 );
 const screenshotDir = process.env.TEST_SCREENSHOTS;
+const defaultStatementDate = "1993-11-01";
 let realChecks = 0,
   mockedChecks = 0;
 const real = (condition, message) => {
@@ -527,10 +528,16 @@ async function controlledPage(browser, options = {}) {
       (await page.locator("#passwordScheme").inputValue()) === "manual",
       "reset restores manual method",
     );
-    for (const id of ["rhbSuffix", "rhbDate", "tngMobile", "maybankDate"])
+    // Reset restores each control's HTML default value, which pins the prefilled statement dates.
+    for (const [id, value] of [
+      ["rhbSuffix", ""],
+      ["rhbDate", defaultStatementDate],
+      ["tngMobile", ""],
+      ["maybankDate", defaultStatementDate],
+    ])
       real(
-        (await page.locator(`#${id}`).inputValue()) === "",
-        `reset clears ${id}`,
+        (await page.locator(`#${id}`).inputValue()) === value,
+        `reset restores ${id} to its default`,
       );
     real(
       await page.evaluate(() => window.urls.created === window.urls.revoked),
