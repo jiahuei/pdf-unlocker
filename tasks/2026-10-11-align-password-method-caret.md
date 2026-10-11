@@ -1,0 +1,18 @@
+# Align the password method caret with the field inset
+
+## Summary
+
+- The "Password method" select showed the browser's native caret, which Chromium paints against the field's right border, so it did not line up with the 14px inset that every other control uses for its text and padding. The select now opts out of the native appearance and draws the same chevron the calculator site uses, positioned `right 14px center` at 12x8 pixels in the muted ink colour, with 42px of right padding so the selected option cannot run underneath it.
+- The shared field rule now sets `background-color` instead of the `background` shorthand, so the caret image is a plain addition rather than an override of a shorthand that also sets it.
+- Opting out of the native appearance also aligns the field's metrics with the text inputs: the selected option now starts exactly at the 14px inset instead of 18px inside the border, and the select renders 51.6px tall, the same as the password field, instead of 48px.
+- Added a browser regression inside the existing responsive loop that asserts the computed `appearance`, caret image, 42px right padding, `14px` background position and 12x8 background size, and that the select and the password field render at the same height, at 320, 375, 768 and 1440 pixels.
+
+## Verification
+
+- `LD_LIBRARY_PATH=/tmp/finance-browser-libs/extracted/usr/lib/x86_64-linux-gnu PLAYWRIGHT_MODULE=/tmp/ringgit-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python TEST_BASE_URL=http://127.0.0.1:8001 node tests/browser.test.cjs`: passed 151 real browser/runtime/download assertions, up from 143 with the eight new caret checks, and 25 controlled UI race/failure assertions. The real Pyodide, cryptography and pypdf runtime initialized, and the manual, default, RHB, TNG and Maybank paths still unlocked their fixtures with downloads verified by pypdf.
+- Temporary CDP measurement before and after the change at 375 and 1440 pixels: the select's `-internal-select-inner-element` moved from x=60 to x=56, exactly the border plus the 14px padding, its height went from 48 to 51.6 pixels matching the password field, and the document scroll width stayed equal to the viewport at both widths.
+- Temporary pixel check of an element screenshot decoded through a canvas at 375 and 1440 pixels: 28 dark pixels inside the 12x10 band ending 14px from the right edge, none in the 14px inset to its right and none in the band immediately to its left, so the drawn caret paints at the intended inset. Screenshots in `/tmp/pdfu-caret-shots` were not visually reviewed in this session.
+- `npm exec -- prettier --write tests/browser.test.cjs` reformatted one line; `npm exec -- prettier --check src/style.css tests/browser.test.cjs` and `npm run format:check`: passed with the pinned Prettier 3.8.3 on local Node v25.8.2 rather than the workflow's Node 24.
+- `uv tool run ruff@0.15.9 check --output-format github .`: no findings. `uv tool run ruff@0.15.9 format --check .`: four files already formatted. No Python changed.
+- `node --check tests/browser.test.cjs` and `git diff --check`: passed. The diff touches only the select caret rule, the `background-color` longhand and the new regression.
+- Chromium could not be replaced by WebKit here, as in PR #12, so the caret on iOS Safari needs device confirmation through the hosted preview. Opting out of the native appearance replaces the iOS arrow with the drawn chevron while leaving the picker functional.

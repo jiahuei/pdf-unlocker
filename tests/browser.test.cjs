@@ -44,6 +44,36 @@ async function noOverflow(page, check) {
     `No overflow: ${dimensions}`,
   );
 }
+/** Ensures the password method select draws its caret on the 14px field inset and matches the other controls' height. */
+async function selectCaretOnFieldInset(page, check) {
+  const caret = await page.locator("#passwordScheme").evaluate((select) => {
+    const style = getComputedStyle(select);
+    return {
+      appearance: style.appearance,
+      image: style.backgroundImage.slice(0, 20),
+      paddingRight: style.paddingRight,
+      position: style.backgroundPosition,
+      size: style.backgroundSize,
+    };
+  });
+  check(
+    caret.appearance === "none" &&
+      caret.image.startsWith("url(") &&
+      caret.paddingRight === "42px" &&
+      caret.position.includes("14px") &&
+      caret.size === "12px 8px",
+    `password method caret is drawn on the field inset: ${JSON.stringify(caret)}`,
+  );
+  const heights = await page.evaluate(() => {
+    const box = (id) =>
+      +document.getElementById(id).getBoundingClientRect().height.toFixed(1);
+    return { select: box("passwordScheme"), text: box("password") };
+  });
+  check(
+    Math.abs(heights.select - heights.text) < 0.5,
+    `select keeps the text field height: ${JSON.stringify(heights)}`,
+  );
+}
 /** Ensures a statement date field keeps its declared width inside its card, the WebKit intrinsic-sizing regression. */
 async function dateFieldInsideCard(page, check, id) {
   const box = await page.locator(`#${id}`).evaluate((field) => {
@@ -279,6 +309,7 @@ async function controlledPage(browser, options = {}) {
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await noOverflow(page, real);
+      await selectCaretOnFieldInset(page, real);
       real((await page.locator("h1").count()) === 1, "one main heading");
       if (screenshotDir && [375, 1440].includes(width)) {
         fs.mkdirSync(screenshotDir, { recursive: true });

@@ -303,7 +303,7 @@ select {
   min-height: 48px;
   padding: 12px 14px;
   border: 1px solid #cdd3e3;
-  background: #fcfcfe;
+  background-color: #fcfcfe;
   border-radius: 9px;
   color: var(--ink);
   font-size: 16px;
@@ -320,6 +320,16 @@ select {
    border-box, and leaves the picker and its calendar icon intact. */
 input[type="date"] {
   appearance: none;
+}
+/* The native select caret is painted against the border, so draw one on the same 14px inset as
+   the field text; the extra right padding keeps the selected option clear of it. */
+select {
+  appearance: none;
+  padding-right: 42px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.4 1.6 6 6.2l4.6-4.6' fill='none' stroke='%236d768a' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-position: right 14px center;
+  background-repeat: no-repeat;
+  background-size: 12px 8px;
 }
 .password-wrap input {
   padding-right: 74px;
