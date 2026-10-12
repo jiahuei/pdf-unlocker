@@ -53,5 +53,5 @@ jobs:
       - name: Check files using Prettier
         run: npm run format:check
 
-      - name: Verify Pages previews and statement password methods
-        run: node --test tests/pages-preview.test.cjs tests/password-schemes.test.cjs
+      - name: Verify Pages previews, statement passwords and image conversion rules
+        run: node --test tests/pages-preview.test.cjs tests/password-schemes.test.cjs tests/image-converter.test.cjs

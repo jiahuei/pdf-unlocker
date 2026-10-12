@@ -6,6 +6,8 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const baseURL = process.env.TEST_BASE_URL || "http://127.0.0.1:8001";
+// The site root is now the tools directory; PDF Unlocker keeps its own page.
+const pdfURL = `${baseURL}/pdf-unlocker.html`;
 const fixtures = fs.mkdtempSync(
   path.join(os.tmpdir(), "pdf-unlocker-fixtures-"),
 );
@@ -246,7 +248,7 @@ async function controlledPage(browser, options = {}) {
       body: "// Controlled preview worker fixture",
     }),
   );
-  await page.goto(baseURL);
+  await page.goto(pdfURL);
   return { page, context };
 }
 /** Verifies real decryption separately from controlled UI races, errors and layout checks. */
@@ -294,7 +296,7 @@ async function controlledPage(browser, options = {}) {
         return revoke.call(URL, value);
       };
     });
-    await page.goto(baseURL);
+    await page.goto(pdfURL);
     await page.waitForFunction(
       () => document.getElementById("runtimeStatus").dataset.state === "ready",
       null,
@@ -773,7 +775,7 @@ async function controlledPage(browser, options = {}) {
       });
       const page = await context.newPage();
       await page.route("**/pyodide.js", (route) => route.abort());
-      await page.goto(baseURL);
+      await page.goto(pdfURL);
       await page.waitForFunction(
         () =>
           document.getElementById("runtimeStatus").dataset.state === "error",

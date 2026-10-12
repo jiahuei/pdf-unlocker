@@ -129,6 +129,22 @@ button:focus-visible {
   color: var(--muted);
   font-weight: 600;
 }
+.tool-nav {
+  display: flex;
+  gap: 22px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.tool-nav a {
+  text-decoration: none;
+  color: var(--muted);
+}
+.tool-nav a:hover {
+  color: var(--ink);
+}
+.tool-nav a[aria-current="page"] {
+  color: var(--accent);
+}
 .page {
   max-width: 1120px;
   margin: auto;
@@ -160,6 +176,58 @@ h1 {
   content: "✓";
   color: var(--accent);
   margin-right: 7px;
+}
+.tool-section h2 {
+  margin-bottom: 20px;
+}
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.tool-card {
+  display: flex;
+  flex-direction: column;
+  padding: 28px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  text-decoration: none;
+  color: var(--ink);
+  transition:
+    border-color 0.2s,
+    transform 0.2s;
+}
+.tool-card:hover {
+  border-color: #9aa8e8;
+  transform: translateY(-3px);
+  color: var(--ink);
+}
+.tool-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--soft);
+  color: var(--accent);
+  font-size: 26px;
+  margin-bottom: 22px;
+}
+.tool-card h3 {
+  font-size: 1.28rem;
+  margin-bottom: 10px;
+}
+.tool-card p {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-bottom: 20px;
+}
+.card-link {
+  margin-top: auto;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 650;
 }
 .workspace {
   display: grid;
@@ -273,8 +341,17 @@ h1 {
   line-height: 1.5;
   margin: 9px 0 0;
 }
-.password-field {
+.password-field,
+.option-field {
   margin-top: 24px;
+}
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.field-label output {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 .password-details {
   border: 0;
@@ -506,7 +583,8 @@ code {
   font-size: 0.8rem;
   margin: 0;
 }
-.preview-frame canvas {
+.preview-frame canvas,
+.preview-frame img {
   display: block;
   max-width: 100%;
   height: auto;
@@ -551,6 +629,11 @@ code {
   overflow-wrap: anywhere;
   margin-bottom: 16px;
 }
+.result-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: -10px 0 16px;
+}
 .how-section {
   display: grid;
   grid-template-columns: 1fr 1.5fr;
@@ -562,6 +645,62 @@ code {
 }
 .how-section h2 {
   margin-bottom: 12px;
+}
+.section-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0;
+}
+.matrix-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 24px;
+}
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.matrix caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.73rem;
+  padding-bottom: 12px;
+}
+.matrix th,
+.matrix td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+.matrix thead th {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 650;
+}
+.matrix tbody th {
+  text-align: left;
+  font-weight: 650;
+}
+.matrix td {
+  color: #347c5e;
+  font-weight: 650;
+}
+.notes-list {
+  margin: 18px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+.notes-list li {
+  margin-bottom: 8px;
+}
+.notes-list li::marker {
+  color: var(--accent);
 }
 .steps-list {
   display: grid;
@@ -621,6 +760,9 @@ footer {
   .workspace {
     grid-template-columns: 1fr;
   }
+  .tool-grid {
+    grid-template-columns: 1fr;
+  }
   .how-section {
     grid-template-columns: 1fr;
   }
@@ -632,6 +774,17 @@ footer {
   }
   .preview-frame {
     min-height: 300px;
+  }
+}
+@media (max-width: 700px) {
+  .header-inner {
+    flex-wrap: wrap;
+    gap: 12px 20px;
+  }
+  .tool-nav {
+    order: 3;
+    width: 100%;
+    gap: 18px;
   }
 }
 @media (max-width: 540px) {
@@ -655,6 +808,12 @@ footer {
   }
   .panel {
     padding: 22px;
+  }
+  .matrix-card {
+    padding: 18px;
+  }
+  .tool-card {
+    padding: 24px;
   }
   .panel-heading {
     gap: 8px;

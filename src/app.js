@@ -417,17 +417,4 @@ window.addEventListener("resize", () => {
   }, 120);
 });
 window.addEventListener("pagehide", clearResult);
-// Debugging remains opt-in and cannot prevent normal use if its CDN is unavailable.
-try {
-  if (
-    new URL(location.href).searchParams.get("eruda") === "true" ||
-    localStorage.getItem("active-eruda") === "true"
-  ) {
-    loadScript("https://cdn.jsdelivr.net/npm/eruda@3.4.3/eruda.js")
-      .then(() => window.eruda.init())
-      .catch(() => {});
-  }
-} catch (error) {
-  /* Storage may be unavailable in private browsing. */
-}
 ensureEngine().catch(() => {});
