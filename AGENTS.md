@@ -25,7 +25,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 ├── package-lock.json         # Reproducible npm installation
 ├── scripts/                  # Static Pages packaging and preview comments
 ├── tests/                    # Python document and Playwright browser tests
-├── tasks/                    # Dated completion records; plans when needed
+├── tasks/                    # Local, untracked completion records and plans
 ├── AGENTS.md                 # Repository guidance
 ├── README.md                 # Usage and local setup
 └── LICENSE                   # MIT license
@@ -70,6 +70,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 
 ### 3. Task Tracking
 
+- `tasks/` is ignored by Git, so plans, completion records and lessons stay local and out of review. Never commit them; the pull request description carries the same content.
 - Use `tasks/todo.md` for substantial, multi-stage work when persistent tracking is useful.
 - Do not create or modify `tasks/todo.md` for small or routine changes; the completion record below is still required.
 - At the end of every feature, bug fix, or task, before the final handoff, create `tasks/YYYY-MM-DD-<task-name>.md`. Use the completion date and a short, descriptive, lowercase task name with hyphens.
