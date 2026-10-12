@@ -10,6 +10,9 @@ thumbs.db
 *.db
 *.parquet
 
+# Local task records
+tasks/
+
 # Docker
 /docker_data/
 
