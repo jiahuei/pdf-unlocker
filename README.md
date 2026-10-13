@@ -35,7 +35,7 @@ Passwords are derived locally only when you select Unlock PDF. The generated val
 
 ### Image Converter
 
-Convert one image at a time, with HEIC-to-JPG as the main use case. Choose a file, pick an output format and a quality for lossy output, preview the result and download it.
+Convert one image at a time, with HEIC-to-JPG as the main use case. Choose a file, pick an output format and a quality for lossy output, preview the result and download it. JPEG and WebP quality starts at 80; Start over restores that default.
 
 | Input       | To JPG | To PNG | To WebP |
 | ----------- | :----: | :----: | :-----: |
@@ -49,12 +49,12 @@ Input files are recognised from their own bytes rather than their extension or M
 What to expect from a conversion:
 
 - **Orientation is applied to the output pixels**, so the result matches what your photos app shows. iPhone HEIC photos carry their rotation in the file, and JPEG orientation is taken from EXIF.
-- **Metadata is not copied.** EXIF, GPS and colour profiles are dropped, and the output is written in sRGB. Convert from the original if you need that information.
+- **Metadata is not copied.** HEIC source colour profiles are applied before export to sRGB; EXIF, GPS and source colour profiles are not copied to the output. Keep the original if you need that information. ICC-tagged RGB images and SDR NCLX sRGB/Display P3 images with sRGB or BT.709 transfer are supported; other NCLX colour spaces, including HDR, produce an explanatory error. Untagged or unspecified colours are treated as sRGB.
 - **Transparency** is placed on white for JPEG, which has no alpha channel, and preserved for PNG and WebP.
 - **Still images only.** Animated GIF, APNG and animated WebP files are rejected instead of quietly keeping their first frame, as are HEIF files holding several images, such as bursts. AVIF and HDR gain maps are not supported.
 - **Limits** are 40 MB per file and 50 megapixels decoded. Your browser's own canvas limit can be lower, which is reported as a failed conversion rather than a broken file.
 
-The first HEIC conversion downloads a 2 MB WebAssembly decoder; later conversions reuse it. Browsers that decode HEIC themselves, such as Safari on Apple platforms, use their own decoder instead and download nothing. JPEG, PNG and WebP conversions never download a decoder.
+The first HEIC conversion downloads a 2 MB WebAssembly decoder; later conversions reuse it. HEIC always uses this decoder so the same single-image validation applies across browsers. ICC colour conversion uses a temporary profile-tagged PNG and the browser's colour management before the final export; the intermediate file stays in memory. This requires Compression Streams support. NCLX Display P3 requires browser support for Display P3 ImageData. JPEG, PNG and WebP conversions never download a decoder.
 
 ## Privacy
 
@@ -87,7 +87,7 @@ The deployed site is the `src/` directory. `index.html` is the tools directory; 
 
 `password-schemes.js` validates and derives statement passwords without network or storage access. `pdf-engine.py` runs inside Pyodide and is also importable by Python document tests. The matching PDF.js worker source is cached and loaded through an owned blob URL, which is released with the result and also supports PDF.js's main-thread fallback.
 
-`image-converter.js` holds the format table, the byte-level input detection and the decode/encode pipeline; `image-app.js` holds only DOM state. Decoding prefers the browser's own image support and falls back to the HEIC decoder for HEIF input. Changing the selected file or any setting discards the previous result and cancels queued work through an operation token; download URLs, bitmaps, canvases and the PDF worker are released when results are replaced. Reset returns every field to its HTML default.
+`image-converter.js` holds the format table, the byte-level input detection and the decode/encode pipeline; `image-app.js` holds only DOM state. JPEG, PNG and WebP use native decoding; HEIF uses libheif. The pinned libheif WASM API supplies ICC/NCLX profiles, and the browser converts the decoded colours into the sRGB output canvas. Changing the selected file or any setting discards the previous result and invalidates pending UI work through an operation token; download URLs, bitmaps, canvases and the PDF worker are released when results are replaced. Native bitmap dimensions are checked after decoding and rejected bitmaps are closed immediately. Reset returns every field to its HTML default.
 
 Tests use synthetic documents and images, and keep their dependencies outside the project:
 
@@ -96,7 +96,7 @@ python3 -m pip install --target /tmp/pdf-unlocker-test-python pypdf==4.3.1 crypt
 PYTHONPATH=/tmp/pdf-unlocker-test-python python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-The document tests verify RC4, AES-128 and AES-256 password removal, incorrect and whitespace passwords, malformed/plain documents, and preserved text, metadata, outlines, attachments and form fields. `tests/image_fixtures.py` writes the synthetic image fixtures used by the browser suite: still JPEG/PNG/WebP inputs, a transparent PNG, an EXIF-rotated JPEG, animated GIF/APNG/WebP inputs, a multi-image HEIC, a corrupt HEIC, an oversized file and a file above the pixel limit. HEIC fixtures need the optional `pillow-heif`; when it is absent they are skipped and the suite reports that.
+The document tests verify RC4, AES-128 and AES-256 password removal, incorrect and whitespace passwords, malformed/plain documents, and preserved text, metadata, outlines, attachments and form fields. `tests/image_fixtures.py` writes the synthetic image fixtures used by the browser suite: still JPEG/PNG/WebP inputs, a transparent PNG, an EXIF-rotated JPEG, animated GIF/APNG/WebP inputs (including a valid unknown WebP chunk), multi-image/corrupt/untagged HEIC files, oversized input, and ICC/NCLX colour fixtures. Colour references use independent Pillow/LittleCMS conversion and the [CC0 Display P3 test profile](tests/fixtures/README.md); transparent and unsupported HDR cases are included. HEIC fixtures need the optional `pillow-heif`; when it is absent they are skipped and the suite reports that.
 
 Node tests cover the pure logic and run without a browser or network:
 
@@ -118,7 +118,7 @@ PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHON
 
 Run the server in a separate terminal. The PDF suite downloads actual decrypted PDFs and independently checks their contents with pypdf. Separate controlled substitutes test asynchronous loading/read/render cancellation and preview failures. It also checks runtime loading failure/retry, validation, password visibility, pagination, responsive layouts and download cleanup.
 
-The image suite converts the synthetic fixtures in a real browser, downloads the results and independently checks them with Pillow: actual file format, geometry, transparency and pixel values, including HEIC-to-JPG, orientation from EXIF, white behind transparent pixels for JPEG, the quality setting, animation and multi-image rejection, the size and pixel limits, a missing WebP encoder, decoder download failure and retry, replacement during a pending conversion, object-URL release on reset, keyboard operation, mobile layouts, the tools home navigation, the absence of the PDF runtime on the other pages, and both the project root and a nested `pr-preview/<number>/` prefix. Internet access is required for the real browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from a physical iOS Safari check, and HEIC decoding on a physical iPhone has not been verified here.
+The image suite converts the synthetic fixtures in a real browser, downloads the results and independently checks them with Pillow: actual file format, geometry, transparency and pixel values, including HEIC-to-JPG, ICC/NCLX conversion to sRGB, orientation from EXIF, white behind transparent pixels for JPEG, quality 80 on load/reset, animation and multi-image rejection, the size and pixel limits with rejected-bitmap cleanup, a missing WebP encoder, decoder download failure and retry, replacement during a pending conversion, object-URL release on reset, keyboard operation, mobile layouts, the tools home navigation, the absence of the PDF runtime on the other pages, and both the project root and a nested `pr-preview/<number>/` prefix. Internet access is required for the real browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from a physical iOS Safari check, and HEIC decoding on a physical iPhone has not been verified here.
 
 The push workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12 for all branches, plus the Node tests above. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
 

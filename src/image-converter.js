@@ -100,10 +100,12 @@ const ImageConverter = (() => {
   function webpAnimated(bytes) {
     for (let offset = 12; offset + 8 <= bytes.length; ) {
       const type = text(bytes, offset, 4);
-      if (type === "ANMF") return true;
-      if (!/^[A-Z0-9 ]{4}$/.test(type)) return false;
       const size = uint32(bytes, offset + 4, true);
-      offset += 8 + size + (size % 2);
+      const next = offset + 8 + size + (size % 2);
+      if (next > bytes.length) return false;
+      if (type === "ANMF") return true;
+      // Unknown FourCCs are allowed, including lowercase names; skip their padded payloads.
+      offset = next;
     }
     return false;
   }
@@ -126,7 +128,8 @@ const ImageConverter = (() => {
 
   /**
    * Rejects images this conversion cannot hold. Canvas limits differ per browser, so the pixel
-   * ceiling is documented rather than derived, and oversized input fails before it is allocated.
+   * ceiling is documented rather than derived. Native decoding reveals dimensions only after
+   * allocating its bitmap; the caller must close that bitmap if this validation rejects it.
    */
   function checkSize(width, height) {
     if (!(width > 0 && height > 0))
@@ -187,7 +190,12 @@ const ImageConverter = (() => {
         "This image could not be read. Choose a valid image file and try again.",
       );
     }
-    checkSize(bitmap.width, bitmap.height);
+    try {
+      checkSize(bitmap.width, bitmap.height);
+    } catch (error) {
+      bitmap.close();
+      throw error;
+    }
     return { bitmap, width: bitmap.width, height: bitmap.height };
   }
 
@@ -214,7 +222,18 @@ const ImageConverter = (() => {
       const width = image.get_width(),
         height = image.get_height();
       checkSize(width, height);
-      const pixels = new ImageData(width, height);
+      const profile = heifColorProfile(heif, image);
+      const pixels = new ImageData(width, height, {
+        colorSpace: profile.colorSpace,
+      });
+      if (
+        profile.colorSpace === "display-p3" &&
+        pixels.colorSpace !== "display-p3"
+      )
+        throw failure(
+          "profile",
+          "Your browser cannot convert Display P3 colours. Try a newer browser.",
+        );
       await new Promise((resolve, reject) =>
         image.display(pixels, (displayed) =>
           displayed
@@ -224,11 +243,150 @@ const ImageConverter = (() => {
               ),
         ),
       );
-      const bitmap = await createImageBitmap(pixels);
+      if (profile.transfer === 1) {
+        // The decoder converts YCbCr to RGB but leaves the BT.709 transfer function intact.
+        // Canvas understands sRGB/Display P3's sRGB transfer, so convert the encoded channels.
+        const lookup = Uint8ClampedArray.from({ length: 256 }, (_, value) => {
+          const encoded = value / 255;
+          const linear =
+            encoded < 0.081
+              ? encoded / 4.5
+              : ((encoded + 0.099) / 1.099) ** (1 / 0.45);
+          return (
+            255 *
+            (linear <= 0.0031308
+              ? 12.92 * linear
+              : 1.055 * linear ** (1 / 2.4) - 0.055)
+          );
+        });
+        for (let index = 0; index < pixels.data.length; index += 4)
+          for (let channel = 0; channel < 3; channel++)
+            pixels.data[index + channel] = lookup[pixels.data[index + channel]];
+      }
+      const bitmap = profile.icc
+        ? await colorManagedBitmap(pixels, profile.icc)
+        : await createImageBitmap(pixels);
       return { bitmap, width, height };
     } finally {
       image.free();
     }
+  }
+
+  function heifColorProfile(heif, image) {
+    // libheif-js 1.23.5 exposes this C API without an Embind wrapper. Its WASM32 ABI uses
+    // a 12-byte heif_error return buffer before the explicit handle and destination arguments.
+    const handle = image.handle.$$.ptr;
+    const size = heif._heif_image_handle_get_raw_color_profile_size(handle);
+    const profile = { colorSpace: "srgb", transfer: 13 };
+    if (!size) {
+      const buffer = heif._malloc(16);
+      let nclx = 0;
+      try {
+        heif.HEAPU32[(buffer + 12) >> 2] = 0;
+        heif._heif_image_handle_get_nclx_color_profile(
+          buffer,
+          handle,
+          buffer + 12,
+        );
+        nclx = heif.HEAPU32[(buffer + 12) >> 2];
+        const error = heif.HEAP32[buffer >> 2];
+        // Untagged/unspecified SDR images follow the browser's usual sRGB assumption.
+        if (error === heif.heif_error_Color_profile_does_not_exist.value)
+          return profile;
+        if (error || !nclx)
+          throw failure(
+            "profile",
+            "This image's colour profile could not be read.",
+          );
+        const primaries = heif.HEAPU32[(nclx + 4) >> 2];
+        const transfer = heif.HEAPU32[(nclx + 8) >> 2];
+        if (![1, 2, 12].includes(primaries) || ![1, 2, 13].includes(transfer))
+          throw failure(
+            "profile",
+            "This HEIC colour space is not supported. Export an SDR sRGB or Display P3 image and try again.",
+          );
+        profile.colorSpace = primaries === 12 ? "display-p3" : "srgb";
+        profile.transfer = transfer;
+        return profile;
+      } finally {
+        if (nclx) heif._heif_nclx_color_profile_free(nclx);
+        heif._free(buffer);
+      }
+    }
+    const buffer = heif._malloc(12 + size);
+    try {
+      heif._heif_image_handle_get_raw_color_profile(
+        buffer,
+        handle,
+        buffer + 12,
+      );
+      if (heif.HEAP32[buffer >> 2])
+        throw failure(
+          "profile",
+          "This image's colour profile could not be read.",
+        );
+      profile.icc = heif.HEAPU8.slice(buffer + 12, buffer + 12 + size);
+      return profile;
+    } finally {
+      heif._free(buffer);
+    }
+  }
+
+  async function colorManagedBitmap(pixels, profile) {
+    // libheif returns ICC-tagged RGB without applying the profile. Let the browser's PNG
+    // decoder do that transform: attach the source ICC to a temporary lossless PNG instead
+    // of interpreting wide-gamut pixels as sRGB or adding a second colour-management library.
+    const canvas = document.createElement("canvas");
+    canvas.width = pixels.width;
+    canvas.height = pixels.height;
+    let png;
+    try {
+      canvas.getContext("2d").putImageData(pixels, 0, 0);
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      if (!blob)
+        throw failure(
+          "encode",
+          "Your browser could not prepare this image. Try a smaller image.",
+        );
+      png = new Uint8Array(await blob.arrayBuffer());
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
+    const compressed = new Uint8Array(
+      await new Response(
+        new Blob([profile])
+          .stream()
+          .pipeThrough(new CompressionStream("deflate")),
+      ).arrayBuffer(),
+    );
+    // PNG iCCP stores a null-terminated profile name, compression method 0, then zlib data.
+    const chunk = new Uint8Array(compressed.length + 15);
+    const view = new DataView(chunk.buffer);
+    view.setUint32(0, compressed.length + 3);
+    chunk.set([105, 67, 67, 80, 112, 0, 0], 4); // iCCP, "p", null, method
+    chunk.set(compressed, 11);
+    let crc = 0xffffffff;
+    for (const byte of chunk.subarray(4, -4)) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++)
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    view.setUint32(chunk.length - 4, (crc ^ 0xffffffff) >>> 0);
+
+    const parts = [png.subarray(0, 8)];
+    // Only walk the PNG just produced by canvas. Replace colour declarations so the source
+    // ICC is authoritative, retaining the image data and its alpha channel without loss.
+    for (let offset = 8; offset < png.length; ) {
+      const end = offset + uint32(png, offset) + 12;
+      const type = text(png, offset + 4, 4);
+      if (!["sRGB", "iCCP", "gAMA", "cHRM", "cICP"].includes(type))
+        parts.push(png.subarray(offset, end));
+      if (type === "IHDR") parts.push(chunk);
+      offset = end;
+    }
+    return createImageBitmap(new Blob(parts, { type: "image/png" }));
   }
 
   async function encode(source, output, quality) {

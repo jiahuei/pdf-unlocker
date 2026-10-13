@@ -277,6 +277,12 @@ async function verifyPreviewPrefix(browser, open) {
     await page.locator(".brand").click();
     await page.waitForURL(/index\.html$/);
     await page.goto(converterURL);
+    /** Ensures a fresh converter offers the requested default quality before any interaction. */
+    check(
+      (await page.locator("#quality").inputValue()) === "80" &&
+        (await page.locator("#qualityValue").textContent()) === "80",
+      "initial quality and its label are 80",
+    );
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await page.screenshot({
@@ -377,6 +383,43 @@ async function verifyPreviewPrefix(browser, open) {
         "--size",
         "640x400",
       );
+      /** Ensures a genuinely untagged HEIC keeps the documented sRGB assumption. */
+      verify(
+        await convertAndDownload(page, "untagged.heic", { format: "png" }),
+        "--format",
+        "PNG",
+        "--size",
+        "640x400",
+        "--pixel",
+        "20,20,255,0,0",
+      );
+      /** Ensures HEIC source-profile colours are transformed before metadata is removed. */
+      for (const format of ["jpeg", "png", "webp"])
+        verify(
+          await convertAndDownload(page, "p3.heic", {
+            format,
+            quality: format === "png" ? undefined : 100,
+          }),
+          "--format",
+          { jpeg: "JPEG", png: "PNG", webp: "WEBP" }[format],
+          "--size",
+          "64x32",
+          "--reference",
+          path.join(fixtures, "p3-reference.png"),
+        );
+      /** Ensures NCLX primaries/transfer and ICC alpha survive independently verified conversion. */
+      for (const fixture of ["p3-nclx", "bt709", "p3-alpha"])
+        verify(
+          await convertAndDownload(page, `${fixture}.heic`, { format: "png" }),
+          "--format",
+          "PNG",
+          "--size",
+          "64x32",
+          "--transparency",
+          fixture === "p3-alpha" ? "kept" : "none",
+          "--reference",
+          path.join(fixtures, `${fixture}-reference.png`),
+        );
     }
 
     // Quality reaches the lossy encoders and is hidden for lossless output.
@@ -409,12 +452,36 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await expectFailure(page, "anim.gif", "Choose a HEIC, JPEG, PNG or WebP");
     await expectFailure(page, "anim.webp", "Animated images are not supported");
+    /** Ensures a valid unknown WebP chunk cannot silently discard the animation's frames. */
+    await expectFailure(
+      page,
+      "anim-unknown.webp",
+      "Animated images are not supported",
+    );
     await expectFailure(page, "anim.png", "Animated images are not supported");
+    /** Ensures a real native bitmap rejected by the pixel limit releases its decoded memory. */
+    await page.evaluate(() => {
+      window.bitmapCloses = 0;
+      window.nativeBitmapClose = ImageBitmap.prototype.close;
+      ImageBitmap.prototype.close = function () {
+        window.bitmapCloses++;
+        return window.nativeBitmapClose.call(this);
+      };
+    });
     await expectFailure(page, "huge.png", "megapixel limit");
+    check(
+      (await page.evaluate(() => {
+        ImageBitmap.prototype.close = window.nativeBitmapClose;
+        return window.bitmapCloses;
+      })) === 1,
+      "the oversized native bitmap is closed exactly once",
+    );
     await expectFailure(page, "oversize.jpg", "MB limit");
     if (heicFixtures) {
       await expectFailure(page, "multi.heic", "holds 2 images");
       await expectFailure(page, "corrupt.heic", "could not be read");
+      /** Ensures unsupported HDR colours fail explicitly instead of exporting mislabelled sRGB. */
+      await expectFailure(page, "hdr.heic", "colour space is not supported");
     }
     // A rejected file must not block the next conversion.
     verify(
@@ -470,6 +537,7 @@ async function verifyPreviewPrefix(browser, open) {
     await trackedPage
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "photo.png"));
+    await trackedPage.locator("#quality").fill("75");
     await trackedPage.locator("#convertBtn").click();
     await trackedPage
       .locator("#imageActions")
@@ -490,7 +558,8 @@ async function verifyPreviewPrefix(browser, open) {
     );
     check(
       (await trackedPage.locator("#outputFormat").inputValue()) === "jpeg" &&
-        (await trackedPage.locator("#quality").inputValue()) === "90",
+        (await trackedPage.locator("#quality").inputValue()) === "80" &&
+        (await trackedPage.locator("#qualityValue").textContent()) === "80",
       "reset restores the documented defaults",
     );
     check(

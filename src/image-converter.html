@@ -91,7 +91,7 @@
             <div class="option-field" id="qualityField">
               <label class="field-label" for="quality"
                 >Quality
-                <output id="qualityValue" for="quality">90</output></label
+                <output id="qualityValue" for="quality">80</output></label
               >
               <input
                 type="range"
@@ -100,7 +100,7 @@
                 min="50"
                 max="100"
                 step="5"
-                value="90"
+                value="80"
                 aria-describedby="qualityHelp"
               />
               <p class="help" id="qualityHelp">
@@ -214,9 +214,10 @@
               files are not supported.
             </li>
             <li>
-              Orientation is applied to the output pixels, so the result matches
-              what your photos app shows. EXIF, GPS and colour profiles are not
-              copied.
+              Orientation and supported colour profiles are applied before
+              export to sRGB. EXIF, GPS and source colour profiles are not
+              copied. Unsupported HEIC colour spaces, including HDR, are
+              rejected.
             </li>
             <li>
               Transparent pixels are placed on white for JPEG output. PNG and

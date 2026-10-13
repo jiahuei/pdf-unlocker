@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { runInNewContext } = require("node:vm");
 const {
   MAX_FILE_BYTES,
   MAX_PIXELS,
@@ -100,6 +102,52 @@ test("detects animated PNG and WebP inputs", () => {
   assert.equal(animatedFormat(webp(vp8x, webpChunk("VP8L")), "webp"), null);
   assert.equal(animatedFormat(jpeg, "jpeg"), null);
   assert.equal(animatedFormat(png(ihdr), "png"), null);
+});
+
+/** Ensures valid unknown FourCC chunks cannot hide animation, including odd-length padding. */
+test("detects WebP animation after unknown chunks", () => {
+  for (const type of ["test", "x!  "])
+    assert.equal(
+      animatedFormat(
+        webp(vp8x, webpChunk(type, [1, 2, 3]), webpChunk("ANMF")),
+        "webp",
+      ),
+      "webp",
+      type,
+    );
+  assert.equal(
+    animatedFormat(webp(webpChunk("test", text("ANMF"))), "webp"),
+    null,
+  );
+});
+
+/** Ensures a rejected native bitmap is released before conversion can transfer its ownership. */
+test("closes native bitmaps whose dimensions fail validation", async () => {
+  const source = readFileSync(
+    require.resolve("../src/image-converter.js"),
+    "utf8",
+  );
+  for (const [width, height, code] of [
+    [8000, 7000, "pixels"],
+    [0, 1, "decode"],
+  ]) {
+    let closes = 0;
+    const context = {
+      Blob,
+      createImageBitmap: async () => ({
+        width,
+        height,
+        close: () => closes++,
+      }),
+      module: { exports: {} },
+    };
+    runInNewContext(source, context);
+    await assert.rejects(
+      context.module.exports.convert(new Blob([jpeg]), OUTPUTS[0], 0.9),
+      (error) => error.code === code,
+    );
+    assert.equal(closes, 1, `${width} x ${height}`);
+  }
 });
 
 /** Ensures downloads keep the user's base name and gain the selected output extension. */

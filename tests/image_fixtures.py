@@ -1,9 +1,10 @@
 """Generate synthetic image fixtures for the converter's browser regressions."""
 
+import io
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageCms, ImageDraw
 
 ORIENTATION_TAG = 274
 ROTATE_90_CW = 6
@@ -20,6 +21,16 @@ def gradient(size, marker):
     return image
 
 
+def bt709_to_srgb(channel):
+    """Map a decoded BT.709 channel through linear light to an independent sRGB reference."""
+    value = channel / 255
+    linear = value / 4.5 if value < 0.081 else ((value + 0.099) / 1.099) ** (1 / 0.45)
+    srgb = (
+        12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+    )
+    return round(255 * srgb)
+
+
 def write_heif_fixtures(directory):
     """Write single and multi-image HEIC fixtures when the optional encoder is installed."""
     try:
@@ -29,9 +40,79 @@ def write_heif_fixtures(directory):
         return
     pillow_heif.register_heif_opener()
     gradient((640, 400), (255, 0, 0)).save(directory / "photo.heic", quality=90)
+    gradient((640, 400), (255, 0, 0)).save(
+        directory / "untagged.heic", quality=90, save_nclx_profile=False
+    )
+    with Image.open(directory / "untagged.heic") as untagged:
+        assert not untagged.info.get("icc_profile")
+        assert not untagged.info.get("nclx_profile")
     multi = pillow_heif.from_pillow(gradient((320, 200), (0, 0, 255)))
     multi.add_from_pillow(gradient((160, 120), (255, 255, 0)))
     multi.save(directory / "multi.heic")
+
+    # Public-domain profile plus synthetic swatches: the reference uses LittleCMS, independently
+    # of the browser's colour management, and accounts for the HEIC encoder's rounding.
+    profile = (Path(__file__).parent / "fixtures" / "DisplayP3-v4.icc").read_bytes()
+    colour = Image.new("RGB", (64, 32), (200, 100, 50))
+    ImageDraw.Draw(colour).rectangle([32, 0, 63, 31], fill=(70, 170, 130))
+    colour.save(directory / "p3.heic", icc_profile=profile, quality=100)
+    with Image.open(directory / "p3.heic") as decoded:
+        ImageCms.profileToProfile(
+            decoded,
+            ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+            ImageCms.createProfile("sRGB"),
+            outputMode="RGB",
+        ).save(directory / "p3-reference.png")
+
+    transparent_colour = colour.convert("RGBA")
+    transparent_colour.putalpha(128)
+    transparent_colour.save(
+        directory / "p3-alpha.heic", icc_profile=profile, quality=100
+    )
+    with Image.open(directory / "p3-alpha.heic") as decoded:
+        assert decoded.mode == "RGBA"
+        ImageCms.profileToProfile(
+            decoded,
+            ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+            ImageCms.createProfile("sRGB"),
+            outputMode="RGBA",
+        ).save(directory / "p3-alpha-reference.png")
+
+    for name, primaries, transfer in (
+        ("p3-nclx", 12, 13),
+        ("bt709", 1, 1),
+        ("hdr", 9, 16),
+    ):
+        nclx = {
+            "color_primaries": primaries,
+            "transfer_characteristics": transfer,
+            "matrix_coefficients": 6,
+            "full_range_flag": 1,
+        }
+        # Set the source and output profiles alike so encoding preserves these synthetic RGB
+        # values. The actual keyword is plural, despite the encoder's singular documentation.
+        colour.save(
+            directory / f"{name}.heic",
+            quality=100,
+            save_nclx_profile=True,
+            nclx_profile=nclx,
+            **nclx,
+        )
+        with Image.open(directory / f"{name}.heic") as decoded:
+            assert not decoded.info.get("icc_profile")
+            actual = decoded.info["nclx_profile"]
+            assert all(actual[key] == value for key, value in nclx.items())
+            if name == "p3-nclx":
+                ImageCms.profileToProfile(
+                    decoded,
+                    ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                    ImageCms.createProfile("sRGB"),
+                    outputMode="RGB",
+                ).save(directory / "p3-nclx-reference.png")
+            elif name == "bt709":
+                # An independent Python reference inverts the BT.709 transfer curve, then
+                # encodes sRGB; the HEIC decode already handles YCbCr and limited/full range.
+                decoded.point(bt709_to_srgb).save(directory / "bt709-reference.png")
 
 
 def write_fixtures(directory):
@@ -63,6 +144,14 @@ def write_fixtures(directory):
             duration=100,
             loop=0,
         )
+
+    # WebP permits unknown chunks: a lowercase name and odd payload must not hide animation.
+    animated = bytearray((directory / "anim.webp").read_bytes())
+    first_chunk_size = int.from_bytes(animated[16:20], "little")
+    insertion = 20 + first_chunk_size + first_chunk_size % 2
+    animated[insertion:insertion] = b"test" + (3).to_bytes(4, "little") + b"abc\0"
+    animated[4:8] = (len(animated) - 8).to_bytes(4, "little")
+    (directory / "anim-unknown.webp").write_bytes(animated)
 
     # A solid colour keeps the file small while decoding past the documented pixel limit.
     Image.new("RGB", (8000, 7000), (12, 34, 56)).save(directory / "huge.png")
