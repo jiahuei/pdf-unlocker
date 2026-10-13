@@ -207,6 +207,17 @@ Do not format unrelated files merely to make a repository-wide check pass.
 - Always provide concrete findings and recommended solutions.
 - Check compliance with this `AGENTS.md` and project conventions.
 
+### Publishing PR review findings
+
+- When publishing a GitHub PR review, prefer inline review comments attached to the affected diff lines for actionable, code-specific findings.
+- Anchor each finding to the smallest relevant line range on the reviewed commit. Explain the problem, its concrete impact or reproduction, and the recommended fix. Include severity when the repository's review format uses it.
+- Keep separate findings in separate inline threads. Before posting, check existing comments to avoid duplicating the same finding.
+- Use the review body for a concise overall assessment, verification results, and findings that cannot reasonably be attached to a diff line. Reference inline threads instead of repeating their full contents.
+- If GitHub cannot anchor a finding to the relevant code, use a review-level comment with an explicit file/line or commit permalink. Do not attach it to unrelated changed lines merely to make it inline.
+- Follow an explicit user request for a different review format.
+
+This rule governs how a review is published; it does not make every request to review code an instruction to post publicly.
+
 ## Release Tagging
 
 - Create or push release tags only when requested by the user.
