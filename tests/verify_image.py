@@ -5,14 +5,44 @@ from pathlib import Path
 
 from PIL import Image
 
+try:  # A HEIC source needs the optional plugin registered before Pillow can open it.
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
 TOLERANCE = 8
+ORIENTATION_TAG = 274
+GPS_IFD = 0x8825
+# Make, Model, DateTime and Artist: the shooting details the checkbox promises to keep.
+RETAINED_TAGS = (271, 272, 306, 315)
 
 
-def verify_image(path, expected_format, size, transparency, pixel, reference=None):
+def check_exif(image, exif_from):
+    """Assert metadata is dropped by default, or retained upright when it was asked for."""
+    exif = image.getexif()
+    if not exif_from:
+        assert not exif, "output must not carry source metadata"
+        return
+    with Image.open(Path(exif_from)) as source:
+        expected = source.getexif()
+        for tag in RETAINED_TAGS:
+            assert exif.get(tag) == expected.get(tag), f"tag {tag} was not retained"
+        assert exif.get_ifd(GPS_IFD) == expected.get_ifd(GPS_IFD), (
+            "the GPS position was not retained"
+        )
+    # The converted pixels are already upright, so viewers must not rotate them a second time.
+    assert exif.get(ORIENTATION_TAG, 1) == 1, "retained EXIF must be marked upright"
+
+
+def verify_image(
+    path, expected_format, size, transparency, pixel, reference=None, exif_from=None
+):
     """Assert the file really is the advertised format, with the expected geometry and pixels."""
     with Image.open(Path(path)) as image:
         assert image.format == expected_format, f"{image.format} != {expected_format}"
-        assert not image.getexif(), "output must not carry source metadata"
+        check_exif(image, exif_from)
         width, height = (int(part) for part in size.split("x"))
         assert image.size == (width, height), f"{image.size} != {(width, height)}"
         # Canvas output is always RGBA, so "none" means fully opaque rather than no alpha band.
@@ -57,6 +87,10 @@ if __name__ == "__main__":
         "--pixel", action="append", help="expected X,Y,R,G,B[,A]; repeatable"
     )
     parser.add_argument("--reference", help="independent sRGB reference image")
+    parser.add_argument(
+        "--exif-from",
+        help="source whose EXIF, including GPS, the output must retain upright",
+    )
     arguments = parser.parse_args()
     verify_image(
         arguments.path,
@@ -65,4 +99,5 @@ if __name__ == "__main__":
         arguments.transparency,
         arguments.pixel,
         arguments.reference,
+        arguments.exif_from,
     )

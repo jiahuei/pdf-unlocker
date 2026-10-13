@@ -30,6 +30,13 @@ function python(args) {
   assert.equal(process.status, 0, process.stderr || process.stdout);
 }
 python([path.join(__dirname, "image_fixtures.py"), fixtures]);
+// A real camera photo exercises what synthetic fixtures cannot: grid-derived HEVC tiles, a wide
+// gamut profile, container rotation and auxiliary items. It is copied in from TEST_HEIC so no
+// personal photograph, or the GPS metadata inside it, is committed to the repository.
+const realHeic = process.env.TEST_HEIC;
+if (realHeic && !fs.existsSync(realHeic))
+  throw new Error(`TEST_HEIC does not exist: ${realHeic}`);
+if (realHeic) fs.copyFileSync(realHeic, path.join(fixtures, "real.heic"));
 const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
 
 /** Checks a real download independently with Pillow instead of trusting the success message. */
@@ -56,6 +63,8 @@ async function convertAndDownload(page, fixture, options = {}) {
   const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
   await page.locator("#imageFile").setInputFiles(path.join(fixtures, fixture));
   await page.locator("#outputFormat").selectOption(format);
+  if (options.keepExif !== undefined)
+    await page.locator("#keepExif").setChecked(options.keepExif);
   if (options.quality !== undefined)
     await page.locator("#quality").fill(String(options.quality));
   await page.locator("#convertBtn").click();
@@ -421,6 +430,84 @@ async function verifyPreviewPrefix(browser, open) {
           path.join(fixtures, `${fixture}-reference.png`),
         );
     }
+    if (realHeic) {
+      /** Ensures a real camera HEIC keeps its orientation, geometry and colours end to end. */
+      const output = await convertAndDownload(page, "real.heic");
+      python([path.join(__dirname, "verify_real_heic.py"), realHeic, output]);
+      verified++;
+      check(
+        true,
+        "a real HEIC photo converts to a valid JPG with independent colour verification",
+      );
+      const retained = await convertAndDownload(page, "real.heic", {
+        keepExif: true,
+      });
+      python([
+        path.join(__dirname, "verify_real_heic.py"),
+        realHeic,
+        retained,
+        "--keep-exif",
+      ]);
+      verified++;
+      check(
+        true,
+        "a real HEIC photo keeps its EXIF, including GPS, when that is requested",
+      );
+      await page.locator("#keepExif").setChecked(false);
+    }
+
+    // Retained metadata is opt-in: by default no source position may reach the download.
+    verify(
+      await convertAndDownload(page, "gps.jpg", { keepExif: false }),
+      "--format",
+      "JPEG",
+      "--size",
+      "300x600",
+      "--pixel",
+      "260,50,0,255,0",
+    );
+    /** Ensures the retained EXIF keeps the position and stays upright in every output. */
+    for (const format of ["jpeg", "png", "webp"])
+      verify(
+        await convertAndDownload(page, "gps.jpg", { format, keepExif: true }),
+        "--format",
+        { jpeg: "JPEG", png: "PNG", webp: "WEBP" }[format],
+        "--size",
+        "300x600",
+        "--exif-from",
+        path.join(fixtures, "gps.jpg"),
+      );
+    check(
+      (await page.locator("#resultMeta").textContent()).includes("EXIF kept"),
+      "the result reports the retained EXIF",
+    );
+    if (heicFixtures)
+      verify(
+        await convertAndDownload(page, "gps.heic", { keepExif: true }),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--exif-from",
+        path.join(fixtures, "gps.heic"),
+      );
+    // A source without EXIF says so instead of quietly claiming to have kept it.
+    await convertAndDownload(page, "photo.png", { keepExif: true });
+    check(
+      (await page.locator("#resultMeta").textContent()).includes(
+        "no EXIF in the source",
+      ),
+      "a source without EXIF is reported rather than implied",
+    );
+    check(
+      await page.locator("#imageActions").isVisible(),
+      "a result is shown before the setting changes",
+    );
+    await page.locator("#keepExif").setChecked(false);
+    check(
+      await page.locator("#imageActions").isHidden(),
+      "changing the EXIF setting clears the result it no longer describes",
+    );
 
     // Quality reaches the lossy encoders and is hidden for lossless output.
     const small = await convertAndDownload(page, "photo.jpg", { quality: 50 });
@@ -534,6 +621,8 @@ async function verifyPreviewPrefix(browser, open) {
     const trackedPage = await open();
     await trackObjectURLs(trackedPage);
     await trackedPage.goto(converterURL);
+    // A retained-metadata choice must not survive reset, or the next photo leaks its position.
+    await trackedPage.locator("#keepExif").setChecked(true);
     await trackedPage
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "photo.png"));
@@ -559,7 +648,8 @@ async function verifyPreviewPrefix(browser, open) {
     check(
       (await trackedPage.locator("#outputFormat").inputValue()) === "jpeg" &&
         (await trackedPage.locator("#quality").inputValue()) === "80" &&
-        (await trackedPage.locator("#qualityValue").textContent()) === "80",
+        (await trackedPage.locator("#qualityValue").textContent()) === "80" &&
+        !(await trackedPage.locator("#keepExif").isChecked()),
       "reset restores the documented defaults",
     );
     check(
@@ -700,7 +790,7 @@ async function verifyPreviewPrefix(browser, open) {
     check(uploads.length === 0, `no file bytes are uploaded: ${uploads}`);
     check(pageErrors.length === 0, `no page errors: ${pageErrors}`);
     console.log(
-      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}.`,
+      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "not supplied through TEST_HEIC"}.`,
     );
   } finally {
     await browser.close();

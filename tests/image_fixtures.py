@@ -5,9 +5,31 @@ import sys
 from pathlib import Path
 
 from PIL import Image, ImageCms, ImageDraw
+from PIL.TiffImagePlugin import IFDRational
 
 ORIENTATION_TAG = 274
 ROTATE_90_CW = 6
+GPS_IFD = 0x8825
+# An obviously synthetic position, one arc-second off Null Island, so no real place is recorded.
+SYNTHETIC_GPS = {
+    1: "N",
+    2: (IFDRational(0), IFDRational(0), IFDRational(1)),
+    3: "E",
+    4: (IFDRational(0), IFDRational(0), IFDRational(1)),
+    6: IFDRational(1234),
+    7: (IFDRational(1), IFDRational(2), IFDRational(3)),
+}
+
+
+def gps_exif(orientation=None):
+    """Return EXIF bytes carrying shooting details and a synthetic GPS position."""
+    exif = Image.Exif()
+    exif[271] = "Synthetic"
+    exif[306] = "2026:01:02 03:04:05"
+    exif[GPS_IFD] = SYNTHETIC_GPS
+    if orientation:
+        exif[ORIENTATION_TAG] = orientation
+    return exif.tobytes()
 
 
 def gradient(size, marker):
@@ -40,6 +62,12 @@ def write_heif_fixtures(directory):
         return
     pillow_heif.register_heif_opener()
     gradient((640, 400), (255, 0, 0)).save(directory / "photo.heic", quality=90)
+    # A camera photo carries its EXIF in a separate HEIF item, which only the decoder can read.
+    gradient((640, 400), (255, 0, 0)).save(
+        directory / "gps.heic", quality=90, exif=gps_exif()
+    )
+    with Image.open(directory / "gps.heic") as tagged:
+        assert tagged.getexif().get_ifd(GPS_IFD), "the HEIC fixture must carry GPS"
     gradient((640, 400), (255, 0, 0)).save(
         directory / "untagged.heic", quality=90, save_nclx_profile=False
     )
@@ -132,6 +160,13 @@ def write_fixtures(directory):
     exif = rotated.getexif()
     exif[ORIENTATION_TAG] = ROTATE_90_CW
     rotated.save(directory / "exif6.jpg", exif=exif.tobytes(), quality=90)
+
+    # Rotation plus a position: the output must stay upright while the GPS block survives.
+    gradient((600, 300), (0, 255, 0)).save(
+        directory / "gps.jpg", quality=90, exif=gps_exif(ROTATE_90_CW)
+    )
+    with Image.open(directory / "gps.jpg") as tagged:
+        assert tagged.getexif().get_ifd(GPS_IFD), "the JPEG fixture must carry GPS"
 
     frames = [
         Image.new("RGB", (80, 60), colour) for colour in ((255, 0, 0), (0, 255, 0))

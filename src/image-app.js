@@ -74,29 +74,39 @@ el("convertForm").addEventListener("submit", async (event) => {
   const token = operation,
     file = selectedFile,
     output = selectedOutput(),
-    quality = Number(el("quality").value) / 100;
+    quality = Number(el("quality").value) / 100,
+    keepExif = el("keepExif").checked;
   setBusy(true);
   showMessage("Converting your image on this device…");
   try {
-    const result = await ImageConverter.convert(
-      file,
-      output,
-      quality,
-      (stage) => {
+    const result = await ImageConverter.convert(file, output, quality, {
+      keepExif,
+      onStage: (stage) => {
         if (token === operation && stage === "codec")
           showMessage(
             "Loading the HEIC decoder. This one-off download happens in your browser.",
           );
       },
-    );
+    });
     if (token !== operation) return;
     resultUrl = URL.createObjectURL(result.blob);
     const name = ImageConverter.outputName(file.name, output.extension);
     el("downloadBtn").href = resultUrl;
     el("downloadBtn").download = name;
     el("resultName").textContent = name;
-    el("resultMeta").textContent =
-      `${result.width} × ${result.height} px · ${output.label} · ${sizeLabel(result.blob.size)}`;
+    el("resultMeta").textContent = [
+      `${result.width} × ${result.height} px`,
+      output.label,
+      sizeLabel(result.blob.size),
+      // Say so when the user asked to keep EXIF and the file could not carry it.
+      {
+        kept: "EXIF kept",
+        none: keepExif ? "no EXIF in the source" : "",
+        "too-large": "EXIF too large to keep",
+      }[result.exif],
+    ]
+      .filter(Boolean)
+      .join(" · ");
     el("resultPreview").alt =
       `Preview of ${name}, ${result.width} by ${result.height} pixels`;
     el("resultPreview").src = resultUrl;
@@ -122,6 +132,7 @@ el("imageFile").addEventListener("change", () =>
 );
 el("outputFormat").addEventListener("change", updateOutputFields);
 el("quality").addEventListener("input", updateOutputFields);
+el("keepExif").addEventListener("change", clearResult);
 el("resetBtn").addEventListener("click", () => {
   el("convertForm").reset();
   chooseFile(null);

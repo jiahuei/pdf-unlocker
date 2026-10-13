@@ -349,6 +349,25 @@ input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
 }
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+.checkbox-field input {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+.checkbox-field:focus-within {
+  outline: 3px solid #8393ee;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
 .field-label output {
   color: var(--accent);
   font-variant-numeric: tabular-nums;

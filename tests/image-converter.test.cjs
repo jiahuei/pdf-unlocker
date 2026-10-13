@@ -10,8 +10,12 @@ const {
   OUTPUTS,
   animatedFormat,
   detectFormat,
+  embedExif,
   outputName,
+  resetOrientation,
+  sourceExif,
 } = require("../src/image-converter.js");
+const { crc32 } = require("node:zlib");
 
 const text = (value) => [...value].map((character) => character.charCodeAt(0));
 const uint32BE = (value) =>
@@ -47,6 +51,169 @@ const heif = (brand) =>
 const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]);
 const ihdr = pngChunk("IHDR", new Array(13).fill(0));
 const vp8x = webpChunk("VP8X", [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+const uint16BE = (value) => [value >> 8, value & 255];
+const uint16LE = (value) => [value & 255, value >> 8];
+// SOI, an APP0 segment, the start of scan and EOI: enough for the segment walk.
+const jpegFile = Uint8Array.from([
+  0xff, 0xd8, 0xff, 0xe0, 0, 4, 0xaa, 0xbb, 0xff, 0xda, 0, 2, 0xff, 0xd9,
+]);
+
+/** Builds a one-entry TIFF holding an Orientation tag, in the requested byte order. */
+function tiff(littleEndian, orientation) {
+  const uint16 = littleEndian ? uint16LE : uint16BE;
+  const uint32 = littleEndian ? uint32LE : uint32BE;
+  return Uint8Array.from([
+    ...text(littleEndian ? "II" : "MM"),
+    ...uint16(42),
+    ...uint32(8), // IFD0 follows the header immediately
+    ...uint16(1), // one entry
+    ...uint16(0x0112), // Orientation
+    ...uint16(3), // SHORT
+    ...uint32(1), // count
+    ...uint16(orientation),
+    0,
+    0,
+    ...uint32(0), // no next IFD
+  ]);
+}
+
+/** Reads the Orientation value back out of the fixture layout above. */
+function orientationOf(bytes, littleEndian) {
+  const value = bytes.subarray(18, 20);
+  return littleEndian ? value[0] | (value[1] << 8) : (value[0] << 8) | value[1];
+}
+const readUint32BE = (bytes, offset) =>
+  ((bytes[offset] << 24) |
+    (bytes[offset + 1] << 16) |
+    (bytes[offset + 2] << 8) |
+    bytes[offset + 3]) >>>
+  0;
+const readUint32LE = (bytes, offset) =>
+  ((bytes[offset + 3] << 24) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 1] << 8) |
+    bytes[offset]) >>>
+  0;
+const fourcc = (bytes, offset) =>
+  String.fromCharCode(...bytes.subarray(offset, offset + 4));
+const pngFile = png(ihdr, pngChunk("IDAT", [1, 2, 3]), pngChunk("IEND"));
+const webpFile = webp(webpChunk("VP8 ", [1, 2, 3, 4]));
+
+/**
+ * Ensures retained EXIF is marked upright. The converted pixels are already rotated, so copying
+ * the source value would make viewers rotate the output a second time.
+ */
+test("resets the orientation of retained EXIF", () => {
+  for (const littleEndian of [true, false]) {
+    const source = tiff(littleEndian, 6);
+    const reset = resetOrientation(Uint8Array.from(source));
+    assert.equal(orientationOf(reset, littleEndian), 1, `${littleEndian}`);
+    // Only the two value bytes change; every other byte is copied through.
+    for (const [index, byte] of source.entries())
+      if (index < 18 || index > 19)
+        assert.equal(reset[index], byte, `byte ${index}`);
+  }
+  // A block with no entries, and a truncated header, are returned untouched rather than parsed.
+  for (const partial of [
+    [...text("II"), 42, 0, 8, 0, 0, 0, 0, 0, 0],
+    [...text("MM"), 0, 42],
+  ])
+    assert.deepEqual(
+      resetOrientation(Uint8Array.from(partial)),
+      Uint8Array.from(partial),
+    );
+});
+
+/** Ensures the transplant is readable from each container and leaves the image data intact. */
+test("embeds EXIF into JPEG, PNG and WebP output", () => {
+  const source = tiff(true, 6);
+  for (const input of [jpegFile, pngFile, webpFile])
+    assert.equal(
+      sourceExif(
+        input,
+        input === jpegFile ? "jpeg" : input === pngFile ? "png" : "webp",
+      ),
+      null,
+      "a canvas-style output carries no EXIF before the transplant",
+    );
+
+  const jpegOut = embedExif("image/jpeg", jpegFile, source, 4, 3);
+  assert.deepEqual(
+    jpegOut.subarray(0, 12),
+    Uint8Array.from([
+      0xff,
+      0xd8,
+      0xff,
+      0xe1,
+      0,
+      source.length + 8,
+      ...text("Exif"),
+      0,
+      0,
+    ]),
+  );
+  assert.deepEqual(jpegOut.subarray(12 + source.length), jpegFile.subarray(2));
+  assert.deepEqual(sourceExif(jpegOut, "jpeg"), source);
+
+  const pngOut = embedExif("image/png", pngFile, source, 4, 3);
+  const at = 8 + 12 + 13; // signature plus the whole IHDR chunk
+  assert.equal(readUint32BE(pngOut, at), source.length);
+  assert.deepEqual(
+    pngOut.subarray(at + 4, at + 8),
+    Uint8Array.from(text("eXIf")),
+  );
+  // The CRC is checked against an independent implementation, as viewers reject a bad one.
+  assert.equal(
+    readUint32BE(pngOut, at + 8 + source.length),
+    crc32(pngOut.subarray(at + 4, at + 8 + source.length)),
+  );
+  assert.deepEqual(pngOut.subarray(0, at), pngFile.subarray(0, at));
+  assert.deepEqual(
+    pngOut.subarray(at + 12 + source.length),
+    pngFile.subarray(at),
+  );
+  assert.deepEqual(sourceExif(pngOut, "png"), source);
+
+  const webpOut = embedExif("image/webp", webpFile, source, 4, 3);
+  assert.deepEqual(webpOut.subarray(0, 4), Uint8Array.from(text("RIFF")));
+  assert.equal(readUint32LE(webpOut, 4), webpOut.length - 8);
+  assert.deepEqual(webpOut.subarray(8, 16), Uint8Array.from(text("WEBPVP8X")));
+  assert.equal(webpOut[20] & 0x08, 0x08, "the EXIF feature is declared");
+  assert.deepEqual([...webpOut.subarray(24, 30)], [3, 0, 0, 2, 0, 0]);
+  assert.deepEqual(sourceExif(webpOut, "webp"), source);
+  const exifAt = webpOut.length - 8 - source.length - (source.length % 2);
+  assert.equal(
+    fourcc(webpOut, exifAt),
+    "EXIF",
+    "the EXIF chunk follows the image data",
+  );
+  assert.deepEqual(webpOut.subarray(exifAt + 8), source);
+  // An existing extended header keeps its other feature flags.
+  const extended = webp(
+    webpChunk("VP8X", [0x10, 0, 0, 0, 3, 0, 0, 2, 0, 0]),
+    webpChunk("VP8 ", [1, 2, 3, 4]),
+  );
+  const extendedOut = embedExif("image/webp", extended, source, 4, 3);
+  assert.equal(
+    extendedOut[20] & 0x18,
+    0x18,
+    "animation and EXIF flags coexist",
+  );
+  assert.deepEqual(sourceExif(extendedOut, "webp"), source);
+});
+
+/** Ensures EXIF that cannot fit a JPEG segment is refused rather than written out of spec. */
+test("refuses EXIF too large for a JPEG segment", () => {
+  const largest = new Uint8Array(0xffff - 8);
+  assert.ok(embedExif("image/jpeg", jpegFile, largest, 4, 3));
+  assert.equal(
+    embedExif("image/jpeg", jpegFile, new Uint8Array(largest.length + 1), 4, 3),
+    null,
+  );
+  // PNG and WebP carry a 32-bit length, so the same block still fits.
+  assert.ok(embedExif("image/png", pngFile, largest, 4, 3));
+  assert.ok(embedExif("image/webp", webpFile, largest, 4, 3));
+});
 
 /**
  * Ensures inputs are recognised from their own bytes, because camera files frequently arrive

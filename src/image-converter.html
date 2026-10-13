@@ -108,6 +108,23 @@
                 files.
               </p>
             </div>
+            <div class="option-field">
+              <label class="checkbox-field" for="keepExif">
+                <input
+                  type="checkbox"
+                  id="keepExif"
+                  name="keepExif"
+                  aria-describedby="exifHelp"
+                />
+                <span>Keep location and shooting details (EXIF)</span>
+              </label>
+              <p class="help" id="exifHelp">
+                Off by default. When on, the source EXIF, including any GPS
+                position, is copied into the converted file and its orientation
+                tag is reset, because the pixels are already upright. Leave it
+                off before sharing a photo publicly.
+              </p>
+            </div>
             <button class="button primary wide" id="convertBtn" type="submit">
               Convert image <span aria-hidden="true">→</span></button
             ><button class="reset-button" id="resetBtn" type="button">
@@ -215,9 +232,14 @@
             </li>
             <li>
               Orientation and supported colour profiles are applied before
-              export to sRGB. EXIF, GPS and source colour profiles are not
-              copied. Unsupported HEIC colour spaces, including HDR, are
-              rejected.
+              export to sRGB. Source colour profiles are not copied. Unsupported
+              HEIC colour spaces, including HDR, are rejected.
+            </li>
+            <li>
+              EXIF, including the GPS position, is dropped unless you select
+              <strong>Keep location and shooting details</strong>. Its
+              orientation tag is then reset, because the converted pixels are
+              already upright. XMP is never copied.
             </li>
             <li>
               Transparent pixels are placed on white for JPEG output. PNG and

@@ -4,6 +4,11 @@ const ImageConverter = (() => {
   const MAX_FILE_MB = 40;
   const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
   const MAX_PIXELS = 50 * 1000 * 1000;
+  const ORIENTATION_TAG = 0x0112;
+  const TIFF_LITTLE = [0x49, 0x49, 0x2a, 0x00]; // "II" with a 42 magic number
+  const TIFF_BIG = [0x4d, 0x4d, 0x00, 0x2a]; // "MM" with the same magic number
+  // A JPEG application segment carries a 16-bit length that includes its own two bytes.
+  const MAX_JPEG_EXIF = 0xffff - 2 - 6;
   const HEIF_SCRIPT_URL =
     "https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js";
   // Every brand a HEIC photo can carry, including the sequence brands: those are rejected by the
@@ -70,8 +75,39 @@ const ImageConverter = (() => {
     return value;
   }
 
+  function uint16(bytes, offset, littleEndian = false) {
+    const first = bytes[offset] || 0,
+      second = bytes[offset + 1] || 0;
+    return littleEndian ? first | (second << 8) : (first << 8) | second;
+  }
+
   function matches(bytes, offset, values) {
     return values.every((value, index) => bytes[offset + index] === value);
+  }
+
+  const ascii = (value) =>
+    [...value].map((character) => character.charCodeAt(0));
+
+  function concat(...parts) {
+    const joined = new Uint8Array(
+      parts.reduce((total, part) => total + part.length, 0),
+    );
+    let offset = 0;
+    for (const part of parts) {
+      joined.set(part, offset);
+      offset += part.length;
+    }
+    return joined;
+  }
+
+  function crc32(bytes) {
+    let crc = 0xffffffff;
+    for (const byte of bytes) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++)
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
   }
 
   /** Returns jpeg, png, webp or heif from the file's own signature, or null when unrecognised. */
@@ -86,27 +122,39 @@ const ImageConverter = (() => {
     return null;
   }
 
+  /** Walks whole PNG chunks, stopping at a truncated one instead of reading past the file. */
+  function* pngChunks(bytes) {
+    for (let offset = 8; offset + 12 <= bytes.length; ) {
+      const length = uint32(bytes, offset);
+      if (length + 12 > bytes.length - offset) return;
+      yield { type: text(bytes, offset + 4, 4), start: offset + 8, length };
+      offset += 12 + length;
+    }
+  }
+
+  /** Walks whole WebP chunks. Unknown FourCCs are allowed, including lowercase names. */
+  function* webpChunks(bytes) {
+    for (let offset = 12; offset + 8 <= bytes.length; ) {
+      const length = uint32(bytes, offset + 4, true);
+      const next = offset + 8 + length + (length % 2);
+      if (next > bytes.length) return;
+      yield { type: text(bytes, offset, 4), start: offset + 8, length };
+      offset = next;
+    }
+  }
+
   function pngAnimated(bytes) {
     // acTL must appear before the first IDAT, so stop there rather than scanning the whole file.
-    for (let offset = 8; offset + 8 <= bytes.length; ) {
-      const type = text(bytes, offset + 4, 4);
-      if (type === "acTL") return true;
-      if (type === "IDAT") return false;
-      offset += 12 + uint32(bytes, offset);
+    for (const chunk of pngChunks(bytes)) {
+      if (chunk.type === "acTL") return true;
+      if (chunk.type === "IDAT") return false;
     }
     return false;
   }
 
   function webpAnimated(bytes) {
-    for (let offset = 12; offset + 8 <= bytes.length; ) {
-      const type = text(bytes, offset, 4);
-      const size = uint32(bytes, offset + 4, true);
-      const next = offset + 8 + size + (size % 2);
-      if (next > bytes.length) return false;
-      if (type === "ANMF") return true;
-      // Unknown FourCCs are allowed, including lowercase names; skip their padded payloads.
-      offset = next;
-    }
+    for (const chunk of webpChunks(bytes))
+      if (chunk.type === "ANMF") return true;
     return false;
   }
 
@@ -124,6 +172,81 @@ const ImageConverter = (() => {
   function outputName(name, extension) {
     const dot = name.lastIndexOf(".");
     return `${dot > 0 ? name.slice(0, dot) : name || "image"}${extension}`;
+  }
+
+  /**
+   * Locates the TIFF header inside a metadata payload. HEIC prefixes it with a four-byte offset,
+   * JPEG with "Exif\0\0", while PNG and WebP store it directly.
+   */
+  function tiffStart(payload) {
+    for (let offset = 0; offset + 4 <= payload.length && offset <= 12; offset++)
+      if (
+        matches(payload, offset, TIFF_LITTLE) ||
+        matches(payload, offset, TIFF_BIG)
+      )
+        return offset;
+    return -1;
+  }
+
+  function exifFromJpeg(bytes) {
+    for (let offset = 2; offset + 4 <= bytes.length; ) {
+      if (bytes[offset] !== 0xff) return null;
+      const marker = bytes[offset + 1];
+      // Scan and end-of-image markers mean no application segment follows.
+      if (marker === 0xda || marker === 0xd9) return null;
+      const length = uint16(bytes, offset + 2);
+      if (length < 2) return null;
+      if (marker === 0xe1) {
+        const payload = bytes.subarray(offset + 4, offset + 2 + length);
+        const start = tiffStart(payload);
+        if (start >= 0) return payload.subarray(start);
+      }
+      offset += 2 + length;
+    }
+    return null;
+  }
+
+  function chunkExif(bytes, chunks, type) {
+    for (const chunk of chunks)
+      if (chunk.type === type) {
+        const payload = bytes.subarray(chunk.start, chunk.start + chunk.length);
+        const start = tiffStart(payload);
+        return start < 0 ? null : payload.subarray(start);
+      }
+    return null;
+  }
+
+  /** Returns the EXIF stored inline by JPEG, PNG and WebP; HEIF exposes it through its decoder. */
+  function sourceExif(bytes, format) {
+    if (format === "jpeg") return exifFromJpeg(bytes);
+    if (format === "png") return chunkExif(bytes, pngChunks(bytes), "eXIf");
+    if (format === "webp") return chunkExif(bytes, webpChunks(bytes), "EXIF");
+    return null;
+  }
+
+  /**
+   * Resets the EXIF orientation to upright. The converted pixels are already rotated, so keeping
+   * the source value would make viewers rotate the output a second time.
+   */
+  function resetOrientation(tiff) {
+    const little = tiff[0] === 0x49;
+    const ifd = uint32(tiff, 4, little);
+    const entries = ifd + 2 <= tiff.length ? uint16(tiff, ifd, little) : 0;
+    for (let index = 0; index < entries; index++) {
+      const entry = ifd + 2 + index * 12;
+      if (entry + 12 > tiff.length) break;
+      if (uint16(tiff, entry, little) !== ORIENTATION_TAG) continue;
+      // A SHORT value occupies the first two bytes of the entry's value field.
+      tiff[entry + 8] = little ? 1 : 0;
+      tiff[entry + 9] = little ? 0 : 1;
+      break;
+    }
+    return tiff;
+  }
+
+  /** Returns an owned, upright copy of the source EXIF, or null when there is none. */
+  function normalizeExif(tiff) {
+    return tiff ? resetOrientation(Uint8Array.from(tiff)) : null;
   }
 
   /**
@@ -178,7 +301,7 @@ const ImageConverter = (() => {
     return heifPromise;
   }
 
-  async function decodeNative(bytes) {
+  async function decodeNative(bytes, format, keepExif) {
     let bitmap;
     try {
       // createImageBitmap applies the file's own orientation by default, so the output matches
@@ -196,10 +319,70 @@ const ImageConverter = (() => {
       bitmap.close();
       throw error;
     }
-    return { bitmap, width: bitmap.width, height: bitmap.height };
+    return {
+      bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      exif: keepExif ? normalizeExif(sourceExif(bytes, format)) : null,
+    };
   }
 
-  async function decodeHeif(bytes, onStage) {
+  function metadataType(heif, handle, id) {
+    // libheif keeps the returned string alive only until its next call, so it must not be freed.
+    const pointer = heif._heif_image_handle_get_metadata_type(handle, id);
+    let value = "";
+    for (let index = 0; pointer && index < 16; index++) {
+      const byte = heif.HEAPU8[pointer + index];
+      if (!byte) break;
+      value += String.fromCharCode(byte);
+    }
+    return value;
+  }
+
+  /** Reads the Exif item a HEIC photo carries, which no browser API exposes. */
+  function heifExif(heif, image) {
+    // libheif-js exposes this C API without an Embind wrapper. Its WASM32 ABI places a 12-byte
+    // heif_error buffer before the documented arguments, as heifColorProfile already does.
+    const handle = image.handle.$$.ptr;
+    const count = heif._heif_image_handle_get_number_of_metadata_blocks(
+      handle,
+      0,
+    );
+    if (!count) return null;
+    const ids = heif._malloc(4 * count);
+    const error = heif._malloc(12);
+    try {
+      const written = heif._heif_image_handle_get_list_of_metadata_block_IDs(
+        handle,
+        0,
+        ids,
+        count,
+      );
+      for (let index = 0; index < written; index++) {
+        const id = heif.HEAPU32[(ids + index * 4) >> 2];
+        // XMP and other blocks stay behind: only the Exif item holds the TIFF data.
+        if (metadataType(heif, handle, id) !== "Exif") continue;
+        const size = heif._heif_image_handle_get_metadata_size(handle, id);
+        if (!size) continue;
+        const data = heif._malloc(size);
+        try {
+          heif._heif_image_handle_get_metadata(error, handle, id, data);
+          if (heif.HEAP32[error >> 2]) return null;
+          const payload = heif.HEAPU8.slice(data, data + size);
+          const start = tiffStart(payload);
+          return start < 0 ? null : payload.subarray(start);
+        } finally {
+          heif._free(data);
+        }
+      }
+      return null;
+    } finally {
+      heif._free(ids);
+      heif._free(error);
+    }
+  }
+
+  async function decodeHeif(bytes, onStage, keepExif) {
     onStage?.("codec");
     const heif = await loadHeif();
     // One decoder instance is reused: decoding again is what releases the previous HEIF context.
@@ -266,7 +449,12 @@ const ImageConverter = (() => {
       const bitmap = profile.icc
         ? await colorManagedBitmap(pixels, profile.icc)
         : await createImageBitmap(pixels);
-      return { bitmap, width, height };
+      return {
+        bitmap,
+        width,
+        height,
+        exif: keepExif ? normalizeExif(heifExif(heif, image)) : null,
+      };
     } finally {
       image.free();
     }
@@ -367,13 +555,10 @@ const ImageConverter = (() => {
     view.setUint32(0, compressed.length + 3);
     chunk.set([105, 67, 67, 80, 112, 0, 0], 4); // iCCP, "p", null, method
     chunk.set(compressed, 11);
-    let crc = 0xffffffff;
-    for (const byte of chunk.subarray(4, -4)) {
-      crc ^= byte;
-      for (let bit = 0; bit < 8; bit++)
-        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-    view.setUint32(chunk.length - 4, (crc ^ 0xffffffff) >>> 0);
+    view.setUint32(
+      chunk.length - 4,
+      crc32(chunk.subarray(4, chunk.length - 4)),
+    );
 
     const parts = [png.subarray(0, 8)];
     // Only walk the PNG just produced by canvas. Replace colour declarations so the source
@@ -387,6 +572,99 @@ const ImageConverter = (() => {
       offset = end;
     }
     return createImageBitmap(new Blob(parts, { type: "image/png" }));
+  }
+
+  const uint32LEBytes = (value) =>
+    Uint8Array.from([
+      value & 255,
+      (value >> 8) & 255,
+      (value >> 16) & 255,
+      (value >>> 24) & 255,
+    ]);
+
+  function webpChunk(type, payload) {
+    return concat(
+      Uint8Array.from(ascii(type)),
+      uint32LEBytes(payload.length),
+      payload,
+      new Uint8Array(payload.length % 2),
+    );
+  }
+
+  function embedExifJpeg(bytes, tiff) {
+    if (tiff.length > MAX_JPEG_EXIF) return null;
+    const length = tiff.length + 8;
+    const segment = new Uint8Array(length + 2);
+    segment.set([
+      0xff,
+      0xe1,
+      length >> 8,
+      length & 255,
+      0x45,
+      0x78,
+      0x69,
+      0x66,
+    ]);
+    segment.set(tiff, 10);
+    return concat(bytes.subarray(0, 2), segment, bytes.subarray(2));
+  }
+
+  function embedExifPng(bytes, tiff) {
+    // Canvas always writes IHDR first, so the eXIf chunk goes straight after it.
+    const end = 20 + uint32(bytes, 8);
+    const chunk = new Uint8Array(tiff.length + 12);
+    const view = new DataView(chunk.buffer);
+    view.setUint32(0, tiff.length);
+    chunk.set(ascii("eXIf"), 4);
+    chunk.set(tiff, 8);
+    view.setUint32(tiff.length + 8, crc32(chunk.subarray(4, tiff.length + 8)));
+    return concat(bytes.subarray(0, end), chunk, bytes.subarray(end));
+  }
+
+  function embedExifWebp(bytes, tiff, width, height) {
+    // Canvas writes a simple file, so add the extended header that declares the EXIF feature.
+    // The container requires VP8X first and EXIF after the image data.
+    let flags = 0x08;
+    const body = [];
+    for (const source of webpChunks(bytes)) {
+      if (source.type === "EXIF") continue;
+      const payload = bytes.subarray(
+        source.start,
+        source.start + source.length,
+      );
+      if (source.type === "VP8X") {
+        flags |= payload[0];
+        continue;
+      }
+      body.push(webpChunk(source.type, payload));
+    }
+    const uint24 = (value) =>
+      Uint8Array.from([value & 255, (value >> 8) & 255, (value >> 16) & 255]);
+    const content = concat(
+      webpChunk(
+        "VP8X",
+        concat(
+          Uint8Array.from([flags, 0, 0, 0]),
+          uint24(width - 1),
+          uint24(height - 1),
+        ),
+      ),
+      ...body,
+      webpChunk("EXIF", tiff),
+    );
+    return concat(
+      Uint8Array.from(ascii("RIFF")),
+      uint32LEBytes(content.length + 4),
+      Uint8Array.from(ascii("WEBP")),
+      content,
+    );
+  }
+
+  /** Transplants the source EXIF into the container the canvas encoder just produced. */
+  function embedExif(mime, bytes, tiff, width, height) {
+    if (mime === "image/jpeg") return embedExifJpeg(bytes, tiff);
+    if (mime === "image/png") return embedExifPng(bytes, tiff);
+    return embedExifWebp(bytes, tiff, width, height);
   }
 
   async function encode(source, output, quality) {
@@ -415,7 +693,24 @@ const ImageConverter = (() => {
         "encoder",
         `Your browser cannot create ${output.label} files. Choose another output format.`,
       );
-    return { blob, width: source.width, height: source.height };
+    if (!source.exif)
+      return { blob, width: source.width, height: source.height, exif: "none" };
+    // Canvas encoders write pixels only, so the retained EXIF goes in afterwards.
+    const embedded = embedExif(
+      output.mime,
+      new Uint8Array(await blob.arrayBuffer()),
+      source.exif,
+      source.width,
+      source.height,
+    );
+    return embedded
+      ? {
+          blob: new Blob([embedded], { type: output.mime }),
+          width: source.width,
+          height: source.height,
+          exif: "kept",
+        }
+      : { blob, width: source.width, height: source.height, exif: "too-large" };
   }
 
   /** Reports whether this browser can really encode one output format, before the user picks it. */
@@ -430,9 +725,10 @@ const ImageConverter = (() => {
 
   /**
    * Converts one file to the selected output format entirely on this device.
-   * onStage is optional and reports "codec" before the one-off HEIC decoder download.
+   * The options may keep the source EXIF and may report "codec" before the decoder download.
    */
-  async function convert(file, output, quality, onStage) {
+  async function convert(file, output, quality, options = {}) {
+    const { keepExif = false, onStage } = options;
     if (!file.size) throw failure("empty", "Choose a non-empty image file.");
     if (file.size > MAX_FILE_BYTES)
       throw failure(
@@ -453,8 +749,8 @@ const ImageConverter = (() => {
       );
     const source =
       format === "heif"
-        ? await decodeHeif(bytes, onStage)
-        : await decodeNative(bytes);
+        ? await decodeHeif(bytes, onStage, keepExif)
+        : await decodeNative(bytes, format, keepExif);
     try {
       return await encode(source, output, quality);
     } finally {
@@ -469,8 +765,11 @@ const ImageConverter = (() => {
     animatedFormat,
     convert,
     detectFormat,
+    embedExif,
     encoderSupport,
     outputName,
+    resetOrientation,
+    sourceExif,
   };
 })();
 
