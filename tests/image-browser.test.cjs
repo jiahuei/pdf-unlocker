@@ -374,6 +374,28 @@ async function verifyPreviewPrefix(browser, open) {
       "--pixel",
       "5,5,0,0,0,0",
     );
+    /** Ensures WebP rotations and reflections apply once, with or without retained metadata. */
+    for (let orientation = 1; orientation <= 8; orientation++)
+      for (const keepExif of [true, false])
+        for (const format of orientation === 6
+          ? ["jpeg", "png", "webp"]
+          : ["png"]) {
+          const fixture = `oriented-${orientation}.webp`;
+          verify(
+            await convertAndDownload(page, fixture, {
+              format,
+              keepExif,
+              quality: format === "png" ? undefined : 100,
+            }),
+            "--format",
+            { jpeg: "JPEG", png: "PNG", webp: "WEBP" }[format],
+            "--size",
+            orientation >= 5 ? "32x64" : "64x32",
+            "--reference",
+            path.join(fixtures, `oriented-${orientation}-reference.png`),
+            ...(keepExif ? ["--exif-from", path.join(fixtures, fixture)] : []),
+          );
+        }
     if (heicFixtures) {
       // The core HEIC-to-JPG case, decoded by the lazily downloaded WebAssembly decoder.
       verify(
@@ -561,6 +583,8 @@ async function verifyPreviewPrefix(browser, open) {
       "Animated images are not supported",
     );
     await expectFailure(page, "anim.png", "Animated images are not supported");
+    /** Ensures multi-picture JPEGs are rejected instead of losing every image after the first. */
+    await expectFailure(page, "multi.mpo", "holds 2 images");
     /** Ensures a real native bitmap rejected by the pixel limit releases its decoded memory. */
     await page.evaluate(() => {
       window.bitmapCloses = 0;
@@ -584,6 +608,15 @@ async function verifyPreviewPrefix(browser, open) {
       await expectFailure(page, "corrupt.heic", "could not be read");
       /** Ensures unsupported HDR colours fail explicitly instead of exporting mislabelled sRGB. */
       await expectFailure(page, "hdr.heic", "colour space is not supported");
+      /** Ensures a valid Gray ICC profile is rejected and the HEIC decoder stays usable. */
+      await expectFailure(page, "gray.heic", "colour profile is not supported");
+      verify(
+        await convertAndDownload(page, "photo.heic"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+      );
     }
     // A rejected file must not block the next conversion.
     verify(

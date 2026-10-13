@@ -345,6 +345,9 @@ h1 {
 .option-field {
   margin-top: 24px;
 }
+#convertBtn {
+  margin-top: 24px;
+}
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);

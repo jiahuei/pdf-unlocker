@@ -13,6 +13,7 @@ const {
   embedExif,
   outputName,
   exifTiff,
+  exifOrientation,
   normalizeExif,
   sourceExif,
 } = require("../src/image-converter.js");
@@ -99,6 +100,60 @@ const fourcc = (bytes, offset) =>
   String.fromCharCode(...bytes.subarray(offset, offset + 4));
 const pngFile = png(ihdr, pngChunk("IDAT", [1, 2, 3]), pngChunk("IEND"));
 const webpFile = webp(webpChunk("VP8 ", [1, 2, 3, 4]));
+
+/** Ensures EXIF orientation is read in either byte order and invalid values remain upright. */
+test("reads native WebP orientation without accepting malformed tags", () => {
+  assert.equal(exifOrientation(null), 1);
+  assert.equal(exifOrientation(new Uint8Array(7)), 1);
+  for (const little of [true, false]) {
+    for (let orientation = 1; orientation <= 8; orientation++)
+      assert.equal(exifOrientation(tiff(little, orientation)), orientation);
+    for (const orientation of [0, 9, 65535])
+      assert.equal(exifOrientation(tiff(little, orientation)), 1);
+    const invalidType = tiff(little, 6);
+    new DataView(invalidType.buffer).setUint16(12, 4, little);
+    assert.equal(exifOrientation(invalidType), 1);
+    const invalidCount = tiff(little, 6);
+    new DataView(invalidCount.buffer).setUint32(14, 2, little);
+    assert.equal(exifOrientation(invalidCount), 1);
+    for (const length of [8, 9, 21])
+      assert.equal(exifOrientation(tiff(little, 6).subarray(0, length)), 1);
+  }
+});
+
+/** Prevents double rotation in browsers that honor WebP EXIF, without changing the user's file. */
+test("neutralizes WebP orientation before native decoding in both metadata modes", async () => {
+  const source = readFileSync(
+    require.resolve("../src/image-converter.js"),
+    "utf8",
+  );
+  let decodes = 0;
+  const context = {
+    Blob,
+    createImageBitmap: async (blob) => {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      assert.equal(exifOrientation(sourceExif(bytes, "webp")), 1);
+      decodes++;
+      throw new Error("Stop after inspecting decoder input");
+    },
+    module: { exports: {} },
+  };
+  runInNewContext(source, context);
+  const input = embedExif("image/webp", webpFile, tiff(true, 6), 64, 32);
+  const file = new Blob([input]);
+  for (const keepExif of [true, false])
+    await assert.rejects(
+      context.module.exports.convert(file, OUTPUTS[0], 0.8, { keepExif }),
+      (error) => error.code === "decode",
+    );
+  assert.equal(decodes, 2);
+  assert.equal(
+    exifOrientation(
+      sourceExif(new Uint8Array(await file.arrayBuffer()), "webp"),
+    ),
+    6,
+  );
+});
 
 /**
  * Ensures retained EXIF is marked upright. The converted pixels are already rotated, so copying
@@ -504,4 +559,74 @@ test("publishes the documented outputs and limits", () => {
   );
   assert.equal(MAX_FILE_BYTES, 40 * 1024 * 1024);
   assert.equal(MAX_PIXELS, 50 * 1000 * 1000);
+});
+
+/** Ensures MPF multi-picture JPEGs are rejected before native decoding can drop extra images. */
+test("rejects multi-picture JPEGs while allowing single-image MPF", async () => {
+  const source = readFileSync(
+    require.resolve("../src/image-converter.js"),
+    "utf8",
+  );
+  let decodes = 0;
+  const context = {
+    Blob,
+    createImageBitmap: async () => {
+      decodes++;
+      throw new Error("Reached the native decoder");
+    },
+    module: { exports: {} },
+  };
+  runInNewContext(source, context);
+  for (const little of [false, true]) {
+    const uint16 = little ? uint16LE : uint16BE;
+    const uint32 = little ? uint32LE : uint32BE;
+    const mpf = (count) => [
+      ...text("MPF\0"),
+      ...text(little ? "II" : "MM"),
+      ...uint16(42),
+      ...uint32(8),
+      ...uint16(1),
+      ...uint16(0xb001),
+      ...uint16(4),
+      ...uint32(1),
+      ...uint32(count),
+      ...uint32(0),
+    ];
+    const file = (payload) =>
+      new Blob([
+        Uint8Array.from([
+          0xff,
+          0xd8,
+          0xff,
+          0xff,
+          0xe2,
+          ...uint16BE(payload.length + 2),
+          ...payload,
+          0xff,
+          0xd9,
+        ]),
+      ]);
+    for (const count of [2, 4])
+      await assert.rejects(
+        context.module.exports.convert(file(mpf(count)), OUTPUTS[0], 0.8),
+        (error) =>
+          error.code === "multiple" &&
+          error.message.includes(`holds ${count} images`),
+      );
+    // An incomplete index must not read beyond its segment or invent an extra picture.
+    for (const payload of [
+      mpf(1),
+      mpf(2).slice(0, 20),
+      [0, 0, 0, 0, ...mpf(2)],
+    ])
+      await assert.rejects(
+        context.module.exports.convert(file(payload), OUTPUTS[0], 0.8),
+        (error) => error.code === "decode",
+      );
+  }
+  assert.equal(
+    decodes,
+    6,
+    "only single-image or unrecognised MPF reaches decoding",
+  );
 });

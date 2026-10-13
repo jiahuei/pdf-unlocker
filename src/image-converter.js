@@ -198,25 +198,61 @@ const ImageConverter = (() => {
     return payload.subarray(offset);
   }
 
-  function exifFromJpeg(bytes) {
+  /** Walks JPEG metadata segments, including legal marker padding, before the scan data. */
+  function* jpegSegments(bytes) {
     for (let offset = 2; offset + 4 <= bytes.length; ) {
-      if (bytes[offset] !== 0xff) return null;
+      if (bytes[offset] !== 0xff) return;
       // JPEG permits repeated 0xff fill bytes before a marker code.
       while (bytes[offset + 1] === 0xff) offset++;
-      if (offset + 4 > bytes.length) return null;
+      if (offset + 4 > bytes.length) return;
       const marker = bytes[offset + 1];
       // Scan and end-of-image markers mean no application segment follows.
-      if (marker === 0xda || marker === 0xd9) return null;
+      if (marker === 0xda || marker === 0xd9) return;
       const length = uint16(bytes, offset + 2);
-      if (length < 2 || offset + 2 + length > bytes.length) return null;
+      if (length < 2 || offset + 2 + length > bytes.length) return;
+      yield {
+        marker,
+        payload: bytes.subarray(offset + 4, offset + 2 + length),
+      };
+      offset += 2 + length;
+    }
+  }
+
+  function exifFromJpeg(bytes) {
+    for (const { marker, payload } of jpegSegments(bytes))
       if (marker === 0xe1) {
-        const payload = bytes.subarray(offset + 4, offset + 2 + length);
         const tiff = exifTiff(payload, "jpeg");
         if (tiff) return tiff;
       }
-      offset += 2 + length;
-    }
     return null;
+  }
+
+  /** Reads MPF's image count so native JPEG decoding cannot silently discard extra pictures. */
+  function jpegImageCount(bytes) {
+    for (const { marker, payload } of jpegSegments(bytes)) {
+      if (marker !== 0xe2 || text(payload, 0, 4) !== "MPF\0") continue;
+      const tiff = payload.subarray(4);
+      if (
+        tiff.length < 8 ||
+        !(matches(tiff, 0, TIFF_LITTLE) || matches(tiff, 0, TIFF_BIG))
+      )
+        continue;
+      const little = tiff[0] === 0x49;
+      const ifd = uint32(tiff, 4, little);
+      if (ifd < 8 || ifd + 2 > tiff.length) continue;
+      const entries = uint16(tiff, ifd, little);
+      for (let index = 0; index < entries; index++) {
+        const entry = ifd + 2 + index * 12;
+        if (entry + 12 > tiff.length) break;
+        if (
+          uint16(tiff, entry, little) === 0xb001 &&
+          uint16(tiff, entry + 2, little) === 4 &&
+          uint32(tiff, entry + 4, little) === 1
+        )
+          return uint32(tiff, entry + 8, little);
+      }
+    }
+    return 1;
   }
 
   function chunkExif(bytes, format) {
@@ -235,6 +271,28 @@ const ImageConverter = (() => {
     if (format === "jpeg") return exifFromJpeg(bytes);
     if (format === "png" || format === "webp") return chunkExif(bytes, format);
     return null;
+  }
+
+  /** Reads the main image's standard EXIF orientation, ignoring malformed or unknown values. */
+  function exifOrientation(tiff) {
+    if (!tiff || tiff.length < 8) return 1;
+    const little = tiff[0] === 0x49;
+    const ifd = uint32(tiff, 4, little);
+    if (ifd < 8 || ifd + 2 > tiff.length) return 1;
+    const entries = uint16(tiff, ifd, little);
+    for (let index = 0; index < entries; index++) {
+      const entry = ifd + 2 + index * 12;
+      if (entry + 12 > tiff.length) break;
+      if (
+        uint16(tiff, entry, little) === 0x0112 &&
+        uint16(tiff, entry + 2, little) === 3 &&
+        uint32(tiff, entry + 4, little) === 1
+      ) {
+        const value = uint16(tiff, entry + 8, little);
+        return value >= 1 && value <= 8 ? value : 1;
+      }
+    }
+    return 1;
   }
 
   /**
@@ -333,10 +391,15 @@ const ImageConverter = (() => {
   }
 
   async function decodeNative(bytes, format, keepExif) {
+    const exif =
+      keepExif || format === "webp" ? sourceExif(bytes, format) : null;
+    const orientation = format === "webp" ? exifOrientation(exif) : 1;
+    // WebP decoders differ in EXIF support. Neutralize orientation in our private input bytes
+    // and apply it exactly once at export, including when source metadata is being dropped.
+    if (orientation !== 1) exif.set(normalizeExif(exif));
     let bitmap;
     try {
-      // createImageBitmap applies the file's own orientation by default, so the output matches
-      // what the user already sees in their photo app.
+      // Native decoding applies JPEG/PNG orientation; WebP orientation is handled at export.
       bitmap = await createImageBitmap(new Blob([bytes]));
     } catch {
       throw failure(
@@ -350,13 +413,14 @@ const ImageConverter = (() => {
       bitmap.close();
       throw error;
     }
+    const width = orientation >= 5 ? bitmap.height : bitmap.width;
+    const height = orientation >= 5 ? bitmap.width : bitmap.height;
     return {
       bitmap,
-      width: bitmap.width,
-      height: bitmap.height,
-      exif: keepExif
-        ? normalizeExif(sourceExif(bytes, format), bitmap.width, bitmap.height)
-        : null,
+      width,
+      height,
+      orientation,
+      exif: keepExif ? normalizeExif(exif, width, height) : null,
     };
   }
 
@@ -548,6 +612,13 @@ const ImageConverter = (() => {
           "This image's colour profile could not be read.",
         );
       profile.icc = heif.HEAPU8.slice(buffer + 12, buffer + 12 + size);
+      // The temporary PNG contains RGB pixels; PNG requires an RGB ICC profile for them.
+      // Browsers can ignore an incompatible Gray profile and silently export wrong colours.
+      if (text(profile.icc, 16, 4) !== "RGB ")
+        throw failure(
+          "profile",
+          "This HEIC colour profile is not supported. Export an RGB sRGB or Display P3 image and try again.",
+        );
       return profile;
     } finally {
       heif._free(buffer);
@@ -711,6 +782,20 @@ const ImageConverter = (() => {
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, source.width, source.height);
     }
+    if (source.orientation > 1) {
+      const { width, height } = source;
+      // Translation uses the upright canvas dimensions; orientations 5-8 exchange the axes.
+      const transforms = {
+        2: [-1, 0, 0, 1, width, 0],
+        3: [-1, 0, 0, -1, width, height],
+        4: [1, 0, 0, -1, 0, height],
+        5: [0, 1, 1, 0, 0, 0],
+        6: [0, 1, -1, 0, width, 0],
+        7: [0, -1, -1, 0, width, height],
+        8: [0, -1, 1, 0, 0, height],
+      };
+      context.transform(...transforms[source.orientation]);
+    }
     context.drawImage(source.bitmap, 0, 0);
     const blob = await new Promise((resolve) =>
       canvas.toBlob(resolve, output.mime, output.lossy ? quality : undefined),
@@ -781,6 +866,14 @@ const ImageConverter = (() => {
         "animated",
         "Animated images are not supported. Choose a single still image.",
       );
+    if (format === "jpeg") {
+      const images = jpegImageCount(bytes);
+      if (images > 1)
+        throw failure(
+          "multiple",
+          `This file holds ${images} images. Choose a file with a single still image.`,
+        );
+    }
     const source =
       format === "heif"
         ? await decodeHeif(bytes, onStage, keepExif)
@@ -801,6 +894,7 @@ const ImageConverter = (() => {
     detectFormat,
     embedExif,
     encoderSupport,
+    exifOrientation,
     exifTiff,
     normalizeExif,
     outputName,

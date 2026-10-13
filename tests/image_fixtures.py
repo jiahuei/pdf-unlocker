@@ -4,7 +4,7 @@ import io
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageCms, ImageDraw
+from PIL import Image, ImageCms, ImageDraw, ImageOps
 from PIL.TiffImagePlugin import IFDRational
 
 ORIENTATION_TAG = 274
@@ -106,6 +106,22 @@ def write_heif_fixtures(directory):
             outputMode="RGB",
         ).save(directory / "p3-reference.png")
 
+    # A valid linear Gray profile must be rejected, rather than attached to an RGB PNG.
+    gray_profile = (Path(__file__).parent / "fixtures" / "Gray-linear.icc").read_bytes()
+    Image.new("L", (64, 64), 128).save(
+        directory / "gray.heic", icc_profile=gray_profile, quality=100
+    )
+    with Image.open(directory / "gray.heic") as decoded:
+        assert decoded.mode == "L"
+        assert decoded.info["icc_profile"] == gray_profile
+        reference = ImageCms.profileToProfile(
+            decoded,
+            ImageCms.ImageCmsProfile(io.BytesIO(gray_profile)),
+            ImageCms.createProfile("sRGB"),
+            outputMode="RGB",
+        )
+        assert reference.getpixel((32, 32)) == (188, 188, 188)
+
     transparent_colour = colour.convert("RGBA")
     transparent_colour.putalpha(128)
     transparent_colour.save(
@@ -162,6 +178,15 @@ def write_fixtures(directory):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     gradient((640, 400), (255, 0, 0)).save(directory / "photo.jpg", quality=90)
+    # MPO uses ordinary JPEG framing, but its MPF index declares the additional pictures.
+    gradient((640, 400), (255, 0, 0)).save(
+        directory / "multi.mpo",
+        format="MPO",
+        save_all=True,
+        append_images=[gradient((640, 400), (0, 0, 255))],
+    )
+    with Image.open(directory / "multi.mpo") as multi:
+        assert multi.n_frames == 2, "the MPO fixture must contain two pictures"
     gradient((200, 150), (0, 0, 255)).save(directory / "photo.png")
     gradient((300, 200), (0, 128, 0)).save(directory / "photo.webp", quality=90)
 
@@ -181,6 +206,24 @@ def write_fixtures(directory):
     )
     with Image.open(directory / "gps.jpg") as tagged:
         assert tagged.getexif().get_ifd(GPS_IFD), "the JPEG fixture must carry GPS"
+
+    # Browser WebP decoders may ignore EXIF orientation; verify every rotation and reflection.
+    swatches = Image.new("RGB", (64, 32))
+    draw = ImageDraw.Draw(swatches)
+    for box, colour in (
+        ((0, 0, 31, 15), (255, 0, 0)),
+        ((32, 0, 63, 15), (0, 255, 0)),
+        ((0, 16, 31, 31), (0, 0, 255)),
+        ((32, 16, 63, 31), (255, 255, 0)),
+    ):
+        draw.rectangle(box, fill=colour)
+    for orientation in range(1, 9):
+        file = directory / f"oriented-{orientation}.webp"
+        swatches.save(file, lossless=True, exif=gps_exif(orientation, (64, 32)))
+        with Image.open(file) as decoded:
+            ImageOps.exif_transpose(decoded).save(
+                directory / f"oriented-{orientation}-reference.png"
+            )
 
     # Valid JPEG marker fill before APP1 must not hide EXIF from the metadata scanner.
     padded = bytearray((directory / "gps.jpg").read_bytes())
