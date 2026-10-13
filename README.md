@@ -33,7 +33,9 @@ The RHB and Maybank date fields start at 1 November 1993; change them to the dat
 
 ### Image Converter
 
-Convert one image at a time, with HEIC-to-JPG as the main use case. Choose a file, pick an output format and a quality for lossy output, preview the result and download it. JPEG and WebP quality starts at 80; Start over restores that default.
+Convert images one at a time or in a batch, with HEIC-to-JPG as the main use case. Choose one or more files, pick a single output format and quality for the whole batch, then preview each result and download the ones you want. JPEG and WebP quality starts at 80; Start over restores that default.
+
+A batch is converted in the order you selected, one file at a time, and every file shares the output format, quality and EXIF setting. A file that cannot be converted reports its own reason and does not stop the rest; the panel keeps a success and failure count. Each result is downloaded separately, and files whose names would collide gain a numeric suffix (`photo.jpg`, `photo-2.jpg`). Converted images are held in browser memory until you replace the files, change a setting, choose Start over or leave the page, so very large batches can use a lot of memory on a phone. Choosing new files replaces the current batch and discards its results.
 
 | Input       | To JPG | To PNG | To WebP |
 | ----------- | :----: | :----: | :-----: |
@@ -50,7 +52,7 @@ What to expect from a conversion:
 - **Colours are converted to sRGB.** Unsupported HEIC profiles, including grayscale ICC profiles and HDR, produce an explanatory error. See [supported colour profiles](SPEC.md#colour-conversion).
 - **EXIF is dropped unless you ask to keep it**, so a converted photo cannot quietly carry its GPS position. Tick **Keep location and shooting details (EXIF)** to transplant the source EXIF into JPEG, PNG or WebP output. If the original image contains orientation metadata, the converter uses it to rotate or mirror the image. Retained EXIF is updated to describe the converted image, and XMP is never copied. Leave it unticked before sharing a photo publicly.
 - **Transparency** is placed on white for JPEG, which has no alpha channel, and preserved for PNG and WebP.
-- **Still images only.** Animated GIF, APNG and animated WebP files are rejected instead of quietly keeping their first frame, as are HEIF files holding several images and multi-picture JPEG/MPO files. AVIF and HDR gain maps are not supported.
+- **Still images only.** Animated GIF, APNG and animated WebP files are rejected instead of quietly keeping their first frame, as are HEIF files holding several images and multi-picture JPEG/MPO files. That single-image rule is about the contents of one file; selecting several files is an ordinary batch. AVIF and HDR gain maps are not supported.
 - **Limits** are 40 MB per file and 50 megapixels decoded. Your browser's own canvas limit can be lower, which is reported as a failed conversion rather than a broken file.
 
 The first HEIC conversion downloads its decoder; later conversions reuse it. Internet access is required for that download. See [browser requirements](#browser-support) and the [conversion specification](SPEC.md#image-conversion) for limitations.

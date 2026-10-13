@@ -656,6 +656,91 @@ code {
   color: var(--muted);
   margin: -10px 0 16px;
 }
+.batch-summary {
+  font-size: 0.8rem;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.result-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.result-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  background: white;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 10px;
+}
+.result-row[data-status="converting"] {
+  border-left-color: var(--accent);
+}
+.result-row[data-status="converting"] .result-meta {
+  color: var(--accent);
+}
+.result-row[data-status="done"] {
+  border-left-color: #347c5e;
+}
+.result-row[data-status="failed"] {
+  border-left-color: #c0553a;
+  background: #fffbf9;
+}
+.result-row[data-status="failed"] .result-meta {
+  color: #9a442e;
+}
+.result-row[data-preview] {
+  /* A ring rather than a border colour, so the status colour on the left edge survives. */
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.result-text {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.result-row .result-name {
+  font-size: 0.8rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+.result-row .result-meta {
+  margin: 0;
+}
+.result-controls {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.row-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: white;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+.row-button:hover {
+  border-color: var(--accent-dark);
+}
+.row-button.primary {
+  background: var(--accent);
+  color: white;
+}
+.row-button.primary:hover {
+  background: var(--accent-dark);
+  color: white;
+}
 .how-section {
   display: grid;
   grid-template-columns: 1fr 1.5fr;

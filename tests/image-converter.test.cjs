@@ -12,6 +12,7 @@ const {
   detectFormat,
   embedExif,
   outputName,
+  outputNames,
   exifTiff,
   exifOrientation,
   normalizeExif,
@@ -521,6 +522,38 @@ test("derives the output filename", () => {
   assert.equal(outputName("photo", ".jpg"), "photo.jpg");
   assert.equal(outputName("", ".jpg"), "image.jpg");
   assert.equal(outputName(".hidden", ".jpg"), ".hidden.jpg");
+});
+
+/**
+ * Ensures a batch never offers two downloads under the same name: colliding sources gain
+ * deterministic numeric suffixes, and a suffix another source already used is skipped.
+ */
+test("allocates distinct output filenames within a batch", () => {
+  assert.deepEqual(outputNames(["a.jpg", "b.png"], ".webp"), [
+    "a.webp",
+    "b.webp",
+  ]);
+  // Different source extensions share one output extension, so the second name collides.
+  assert.deepEqual(outputNames(["photo.jpg", "photo.png"], ".jpg"), [
+    "photo.jpg",
+    "photo-2.jpg",
+  ]);
+  assert.deepEqual(
+    outputNames(["photo.png", "photo.jpg", "photo.webp", "photo.heic"], ".png"),
+    ["photo.png", "photo-2.png", "photo-3.png", "photo-4.png"],
+  );
+  // A source that already carries a suffix occupies that name, so a collision skips past it.
+  assert.deepEqual(
+    outputNames(["photo-2.png", "photo.png", "photo.jpg"], ".jpg"),
+    ["photo-2.jpg", "photo.jpg", "photo-3.jpg"],
+  );
+  // A name that already ends in a suffix keeps its own stem, and duplicates stay distinct.
+  assert.deepEqual(outputNames(["photo-2.jpg", "photo-2.jpg"], ".jpg"), [
+    "photo-2.jpg",
+    "photo-2-2.jpg",
+  ]);
+  assert.deepEqual(outputNames([], ".jpg"), []);
+  assert.deepEqual(outputNames(["", ""], ".jpg"), ["image.jpg", "image-2.jpg"]);
 });
 
 /** Keeps the conversion table and the limits in agreement with the published documentation. */

@@ -173,6 +173,24 @@ const ImageConverter = (() => {
     return `${dot > 0 ? name.slice(0, dot) : name || "image"}${extension}`;
   }
 
+  /**
+   * Returns one download name per source name, in order, so a batch never offers two files under
+   * the same name. Different source extensions can share one output extension, so collisions get
+   * deterministic numeric suffixes that also skip names a source already used.
+   */
+  function outputNames(names, extension) {
+    const allocated = new Set();
+    return names.map((name) => {
+      const base = outputName(name, extension);
+      const stem = base.slice(0, -extension.length);
+      let unique = base;
+      for (let index = 2; allocated.has(unique); index++)
+        unique = `${stem}-${index}${extension}`;
+      allocated.add(unique);
+      return unique;
+    });
+  }
+
   /** Reads each container's EXIF framing before validating the TIFF header. */
   function exifTiff(payload, format) {
     let offset = 0;
@@ -898,6 +916,7 @@ const ImageConverter = (() => {
     exifTiff,
     normalizeExif,
     outputName,
+    outputNames,
     sourceExif,
   };
 })();

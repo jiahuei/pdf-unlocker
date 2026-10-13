@@ -56,64 +56,202 @@ function watch(context) {
     return page;
   };
 }
-/** Converts one fixture in the real browser and returns the downloaded file path. */
-async function convertAndDownload(page, fixture, options = {}) {
-  const format = options.format || "jpeg";
-  const extension = { jpeg: "jpg", png: "png", webp: "webp" }[format];
-  const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
-  await page.locator("#imageFile").setInputFiles(path.join(fixtures, fixture));
-  await page.locator("#outputFormat").selectOption(format);
+/** Waits for the running batch to settle: every row reached a final status and the form is idle. */
+async function waitBatch(page, timeout = 120000) {
+  await page.waitForFunction(
+    () => {
+      const rows = [...document.querySelectorAll("#resultList .result-row")];
+      return (
+        rows.length > 0 &&
+        !document.getElementById("convertBtn").disabled &&
+        rows.every((row) => ["done", "failed"].includes(row.dataset.status))
+      );
+    },
+    null,
+    { timeout },
+  );
+}
+/** Reads every row's source name, status, detail line and offered download name. */
+function rowStates(page) {
+  return page.locator("#resultList .result-row").evaluateAll((rows) =>
+    rows.map((row) => ({
+      name: row.querySelector(".result-name").textContent,
+      status: row.dataset.status,
+      meta: row.querySelector(".result-meta").textContent,
+      download: row.querySelector(".row-download").getAttribute("download"),
+    })),
+  );
+}
+/** Chooses a batch of fixtures, applies the shared settings and waits for the conversion. */
+async function convertBatch(page, fixtureNames, options = {}) {
+  await page
+    .locator("#imageFile")
+    .setInputFiles(fixtureNames.map((name) => path.join(fixtures, name)));
+  if (options.format)
+    await page.locator("#outputFormat").selectOption(options.format);
   if (options.keepExif !== undefined)
     await page.locator("#keepExif").setChecked(options.keepExif);
   if (options.quality !== undefined)
     await page.locator("#quality").fill(String(options.quality));
   await page.locator("#convertBtn").click();
-  await page
-    .locator("#imageActions")
-    .waitFor({ state: "visible", timeout: 120000 });
-  check(
-    (await page.locator("#resultName").textContent()) === expected,
-    `${fixture} to ${format}: result named ${expected}`,
-  );
-  check(
-    /^\d+ × \d+ px · /.test(await page.locator("#resultMeta").textContent()),
-    `${fixture} to ${format}: result reports its geometry`,
-  );
-  check(
-    await page.locator("#resultPreview").isVisible(),
-    `${fixture} to ${format}: preview shown`,
-  );
+  await waitBatch(page);
+  return rowStates(page);
+}
+/** Downloads one row's result, checking the offered name, and returns the saved path. */
+async function downloadRow(page, index, expected) {
   const downloadPromise = page.waitForEvent("download");
-  await page.locator("#downloadBtn").click();
+  await page
+    .locator("#resultList .result-row")
+    .nth(index)
+    .locator(".row-download")
+    .click();
   const download = await downloadPromise;
   check(
     download.suggestedFilename() === expected,
-    `${fixture} to ${format}: download offers ${expected}`,
+    `row ${index + 1} offers the download ${expected}`,
   );
   const file = path.join(downloads, `${++downloaded}-${expected}`);
   await download.saveAs(file);
   return file;
 }
-/** Asserts an actionable error is announced and that another attempt stays possible. */
-async function expectFailure(page, fixture, fragment) {
-  await page.locator("#imageFile").setInputFiles(path.join(fixtures, fixture));
-  await page.locator("#convertBtn").click();
-  await page
-    .locator("#message.error")
-    .waitFor({ state: "visible", timeout: 120000 });
-  const message = await page.locator("#message").textContent();
+/** Converts one fixture as a single-file batch and returns the downloaded file path. */
+async function convertAndDownload(page, fixture, options = {}) {
+  const format = options.format || "jpeg";
+  const extension = { jpeg: "jpg", png: "png", webp: "webp" }[format];
+  const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
+  // The resolved format is always applied: a previous case may have left another one selected.
+  const [row] = await convertBatch(page, [fixture], { ...options, format });
+  check(row.status === "done", `${fixture} to ${format}: converted`);
   check(
-    message.includes(fragment),
-    `${fixture}: "${message}" explains "${fragment}"`,
+    row.download === expected &&
+      row.meta.startsWith(`${expected} · `) &&
+      row.meta.includes(" px · "),
+    `${fixture} to ${format}: result named ${expected} reporting its geometry: ${row.meta}`,
   );
   check(
-    await page.locator("#imageActions").isHidden(),
-    `${fixture}: no result offered after failure`,
+    await page.locator("#resultPreview").isVisible(),
+    `${fixture} to ${format}: preview shown`,
+  );
+  return downloadRow(page, 0, expected);
+}
+/** Asserts an actionable error is announced and that another attempt stays possible. */
+async function expectFailure(page, fixture, fragment) {
+  const [row] = await convertBatch(page, [fixture], {});
+  check(row.status === "failed", `${fixture}: reported as failed`);
+  check(
+    row.meta.includes(fragment),
+    `${fixture}: "${row.meta}" explains "${fragment}"`,
+  );
+  check(row.download === null, `${fixture}: no result offered after failure`);
+  check(
+    await page.locator("#message.error").isVisible(),
+    `${fixture}: the failure is announced`,
+  );
+  check(
+    await page.locator("#resultPreview").isHidden(),
+    `${fixture}: nothing is previewed after failure`,
   );
   check(
     !(await page.locator("#convertBtn").isDisabled()),
     `${fixture}: another attempt stays possible`,
   );
+}
+/**
+ * Drops fixtures onto the drop zone. Playwright cannot dispatch a synthetic DragEvent carrying
+ * files, so the DataTransfer and its File objects are built inside the page from the fixture bytes.
+ */
+async function dropFiles(page, fixtureNames) {
+  await page.evaluate(
+    (files) => {
+      const transfer = new DataTransfer();
+      for (const file of files)
+        transfer.items.add(
+          new File(
+            [Uint8Array.from(atob(file.base64), (byte) => byte.charCodeAt(0))],
+            file.name,
+            { type: "image/png" },
+          ),
+        );
+      document
+        .getElementById("fileDrop")
+        .dispatchEvent(
+          new DragEvent("drop", { bubbles: true, dataTransfer: transfer }),
+        );
+    },
+    fixtureNames.map((name) => ({
+      name,
+      base64: fs.readFileSync(path.join(fixtures, name)).toString("base64"),
+    })),
+  );
+}
+/** Counts concurrent converter calls, which the shared HEIC decoder cannot survive. */
+async function trackConvertCalls(page) {
+  await page.evaluate(() => {
+    window.calls = { active: 0, peak: 0, total: 0, files: [] };
+    const convert = ImageConverter.convert;
+    ImageConverter.convert = async (file, ...rest) => {
+      window.calls.files.push(file.name);
+      window.calls.total++;
+      window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
+      try {
+        return await convert(file, ...rest);
+      } finally {
+        window.calls.active--;
+      }
+    };
+  });
+}
+/**
+ * Replaces the converter with a substitute that stays pending until the test releases it, so
+ * invalidation of queued work can be observed deterministically.
+ */
+async function holdConvertCalls(page) {
+  await page.evaluate(() => {
+    window.calls = { active: 0, peak: 0, total: 0, files: [] };
+    window.pending = [];
+    ImageConverter.convert = (file) => {
+      window.calls.files.push(file.name);
+      window.calls.total++;
+      window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
+      return new Promise((resolve) =>
+        window.pending.push(() => {
+          window.calls.active--;
+          resolve({
+            blob: new Blob(["stub"], { type: "image/png" }),
+            width: 4,
+            height: 2,
+            exif: "none",
+          });
+        }),
+      );
+    };
+  });
+}
+/** Releases held conversions one at a time until the batch has settled. */
+function settleBatch(page) {
+  return page.waitForFunction(
+    () => {
+      const rows = [...document.querySelectorAll("#resultList .result-row")];
+      if (
+        rows.length > 0 &&
+        !document.getElementById("convertBtn").disabled &&
+        rows.every((row) => ["done", "failed"].includes(row.dataset.status))
+      )
+        return true;
+      const next = window.pending.shift();
+      if (next) next();
+      return false;
+    },
+    null,
+    { polling: 50, timeout: 30000 },
+  );
+}
+/** Releases the oldest held conversion, which a discarded batch must ignore. */
+function releaseConversion(page) {
+  return page.evaluate(() => {
+    const next = window.pending.shift();
+    if (next) next();
+  });
 }
 /** Ensures responsive pages have no horizontal overflow, including the result state. */
 async function noOverflow(page, width) {
@@ -194,11 +332,9 @@ async function verifyPreviewPrefix(browser, open) {
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "photo.png"));
     await page.locator("#convertBtn").click();
-    await page
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(page, 60000);
     check(
-      (await page.locator("#resultName").textContent()) === "photo.jpg",
+      (await rowStates(page))[0].download === "photo.jpg",
       "conversion works beneath the preview prefix",
     );
     await page.locator(".brand").click();
@@ -246,7 +382,7 @@ async function verifyPreviewPrefix(browser, open) {
     await page.locator('.tool-card[href="image-converter.html"]').click();
     await page.waitForURL(/image-converter\.html$/);
     check(
-      (await page.locator("h1").textContent()) === "Convert your image",
+      (await page.locator("h1").textContent()) === "Convert your images",
       "the converter has its own URL and heading",
     );
     check(
@@ -500,7 +636,7 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "gps.jpg"),
       );
     check(
-      (await page.locator("#resultMeta").textContent()).includes("EXIF kept"),
+      (await rowStates(page))[0].meta.includes("EXIF kept"),
       "the result reports the retained EXIF",
     );
     if (heicFixtures)
@@ -531,18 +667,20 @@ async function verifyPreviewPrefix(browser, open) {
     // A source without EXIF says so instead of quietly claiming to have kept it.
     await convertAndDownload(page, "photo.png", { keepExif: true });
     check(
-      (await page.locator("#resultMeta").textContent()).includes(
-        "no EXIF in the source",
-      ),
+      (await rowStates(page))[0].meta.includes("no EXIF in the source"),
       "a source without EXIF is reported rather than implied",
     );
     check(
-      await page.locator("#imageActions").isVisible(),
+      await page.locator("#batchPanel").isVisible(),
       "a result is shown before the setting changes",
     );
     await page.locator("#keepExif").setChecked(false);
+    const cleared = await rowStates(page);
     check(
-      await page.locator("#imageActions").isHidden(),
+      cleared.length === 1 &&
+        cleared[0].status === "ready" &&
+        cleared[0].download === null &&
+        (await page.locator("#resultPreview").getAttribute("src")) === null,
       "changing the EXIF setting clears the result it no longer describes",
     );
 
@@ -627,6 +765,251 @@ async function verifyPreviewPrefix(browser, open) {
       "200x150",
     );
 
+    // Batch behavior: shared settings, selection order, per-file failures and unique names.
+    const shared = await convertBatch(
+      page,
+      ["photo.jpg", "photo.png", "photo.webp"],
+      { format: "png" },
+    );
+    check(
+      shared.map((row) => row.name).join() === "photo.jpg,photo.png,photo.webp",
+      "the batch lists the selected files in order",
+    );
+    check(
+      shared.every((row) => row.status === "done"),
+      "one action converts every selected file",
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "Converted 3 images",
+      "the batch reports how many images converted",
+    );
+    check(
+      (await page.locator("#message.success").textContent()).includes(
+        "3 converted images are ready to download",
+      ),
+      "a finished batch is announced",
+    );
+    // PNG output makes all three names collide, so the batch allocates distinct suffixes while
+    // each download keeps the pixels of the source it came from.
+    verify(
+      await downloadRow(page, 0, "photo.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "640x400",
+    );
+    verify(
+      await downloadRow(page, 1, "photo-2.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "200x150",
+    );
+    verify(
+      await downloadRow(page, 2, "photo-3.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "300x200",
+    );
+
+    // A source that already carries a suffix occupies that output name, so a colliding name
+    // must skip past it instead of offering two downloads with the same name.
+    fs.copyFileSync(
+      path.join(fixtures, "photo.png"),
+      path.join(fixtures, "photo-2.png"),
+    );
+    const suffixed = await convertBatch(
+      page,
+      ["photo-2.png", "photo.png", "photo.jpg"],
+      { format: "jpeg" },
+    );
+    check(
+      suffixed.map((row) => row.download).join() ===
+        "photo-2.jpg,photo.jpg,photo-3.jpg",
+      `allocated names skip a suffix another source already used: ${suffixed.map((row) => row.download)}`,
+    );
+    verify(
+      await downloadRow(page, 2, "photo-3.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "640x400",
+    );
+
+    // An invalid file fails on its own row without discarding its valid siblings.
+    const mixed = await convertBatch(
+      page,
+      ["photo.png", "notes.txt", "anim.gif", "alpha.png"],
+      { format: "jpeg" },
+    );
+    check(
+      mixed.map((row) => row.status).join() === "done,failed,failed,done",
+      `valid files around invalid ones still convert: ${mixed.map((row) => row.status)}`,
+    );
+    check(
+      mixed[1].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
+        mixed[2].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
+        mixed[1].download === null &&
+        mixed[2].download === null,
+      "each rejected file explains itself and offers no download",
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "Converted 2 of 4, 2 images failed",
+      "the batch reports its success and failure counts",
+    );
+    check(
+      (await page.locator("#message.error").textContent()).includes(
+        "2 of 4 images could not be converted",
+      ),
+      "a partially failed batch is announced as an error",
+    );
+    verify(
+      await downloadRow(page, 0, "photo.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "200x150",
+    );
+    verify(
+      await downloadRow(page, 3, "alpha.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "120x90",
+      "--transparency",
+      "none",
+      "--pixel",
+      "30,30,255,127,127",
+    );
+
+    // An empty file is reported on its own row instead of blocking the rest of the batch.
+    fs.writeFileSync(path.join(fixtures, "empty.png"), "");
+    const [empty] = await convertBatch(page, ["empty.png"], {});
+    check(
+      empty.status === "failed" && empty.meta.includes("non-empty image file"),
+      `an empty file explains itself: ${empty.meta}`,
+    );
+
+    // A batch in which nothing converts still explains every file.
+    const none = await convertBatch(page, ["notes.txt", "anim.webp"], {});
+    check(
+      none.every((row) => row.status === "failed" && row.download === null),
+      "no download is offered when every file fails",
+    );
+    check(
+      none[1].meta.includes("Animated images are not supported"),
+      "an animated file keeps its own reason inside a batch",
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "None of the 2 images converted",
+      "an entirely failed batch says so",
+    );
+
+    // One shared quality and one shared EXIF setting reach every file in the batch.
+    const sizes = {};
+    for (const quality of [50, 100]) {
+      await convertBatch(page, ["photo.jpg", "photo.webp"], {
+        format: "jpeg",
+        quality,
+        keepExif: false,
+      });
+      sizes[quality] = [
+        fs.statSync(await downloadRow(page, 0, "photo.jpg")).size,
+        fs.statSync(await downloadRow(page, 1, "photo-2.jpg")).size,
+      ];
+    }
+    check(
+      sizes[100].every((size, index) => size > sizes[50][index]),
+      `the shared quality reaches every file in the batch: ${JSON.stringify(sizes)}`,
+    );
+    await convertBatch(page, ["gps.jpg", "gps-marker-fill.jpg"], {
+      format: "jpeg",
+      keepExif: true,
+    });
+    check(
+      (await rowStates(page)).every((row) => row.meta.includes("EXIF kept")),
+      "the shared EXIF setting is reported for every file",
+    );
+    verify(
+      await downloadRow(page, 0, "gps.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "300x600",
+      "--exif-from",
+      path.join(fixtures, "gps.jpg"),
+    );
+    verify(
+      await downloadRow(page, 1, "gps-marker-fill.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "300x600",
+      "--exif-from",
+      path.join(fixtures, "gps-marker-fill.jpg"),
+    );
+
+    // One preview panel is shared, so choosing another result replaces what it shows.
+    await convertBatch(page, ["photo.jpg", "alpha.png"], {
+      format: "png",
+      keepExif: false,
+    });
+    const rows = page.locator("#resultList .result-row");
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "photo.png",
+      ) && (await rows.first().getAttribute("data-preview")) === "",
+      "the first result is previewed without a click and marked",
+    );
+    await rows.nth(1).locator(".row-preview").click();
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "alpha.png",
+      ) &&
+        (await rows.first().getAttribute("data-preview")) === null &&
+        (await rows.nth(1).getAttribute("data-preview")) === "",
+      "previewing another result moves the single preview panel",
+    );
+
+    // Drag-and-drop accepts the same batch as the picker, in drop order.
+    await dropFiles(page, ["photo.png", "alpha.png"]);
+    const dropped = await rowStates(page);
+    check(
+      dropped.map((row) => row.name).join() === "photo.png,alpha.png" &&
+        dropped.every((row) => row.status === "ready"),
+      "dropping several files replaces the batch in drop order",
+    );
+    await page.locator("#convertBtn").click();
+    await waitBatch(page);
+    verify(
+      await downloadRow(page, 1, "alpha.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "120x90",
+      "--transparency",
+      "kept",
+      "--pixel",
+      "5,5,0,0,0,0",
+    );
+
+    // Choosing a single file keeps the singular wording and one row.
+    await page
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "photo.png"));
+    check(
+      (await page.locator("#fileName").textContent()) === "1 image chosen" &&
+        (await page.locator("#convertLabel").textContent()) ===
+          "Convert image" &&
+        (await page.locator("#batchSummary").textContent()) ===
+          "1 image ready to convert",
+      "single-file use stays as straightforward as before",
+    );
+
     // Keyboard operation.
     await page.goto(converterURL);
     await page.locator("#imageFile").focus();
@@ -638,13 +1021,35 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await page
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "alpha.png"),
+      ]);
     await page.locator("#convertBtn").focus();
+    check(
+      (await page.locator("#convertLabel").textContent()) ===
+        "Convert 2 images",
+      "the submit button names the batch it will convert",
+    );
     await page.keyboard.press("Enter");
-    await page
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
-    check(true, "Enter on the focused button converts the image");
+    await waitBatch(page, 60000);
+    check(true, "Enter on the focused button converts the batch");
+    const keyboardRows = page.locator("#resultList .result-row");
+    await keyboardRows.nth(1).locator(".row-preview").focus();
+    await page.keyboard.press("Enter");
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "alpha.jpg",
+      ),
+      "Enter on a row control previews that result",
+    );
+    const keyboardDownload = page.waitForEvent("download");
+    await keyboardRows.first().locator(".row-download").focus();
+    await page.keyboard.press("Enter");
+    check(
+      (await keyboardDownload).suggestedFilename() === "photo.jpg",
+      "Enter on a row download saves that file",
+    );
 
     // An unsupported encoder must fail clearly rather than relabel PNG bytes.
     await page.evaluate(() => {
@@ -654,18 +1059,14 @@ async function verifyPreviewPrefix(browser, open) {
     });
     await page.locator("#outputFormat").selectOption("webp");
     await page.locator("#convertBtn").click();
-    await page
-      .locator("#message.error")
-      .waitFor({ state: "visible", timeout: 30000 });
+    await waitBatch(page, 30000);
     check(
-      (await page.locator("#message").textContent()).includes(
-        "cannot create WebP",
-      ),
+      (await rowStates(page))[0].meta.includes("cannot create WebP"),
       "a missing WebP encoder is reported instead of returning PNG bytes",
     );
     await page.close();
 
-    // Object URLs are released on reset and on replacement.
+    // Object URLs are released on reset, on replacement and when the page is hidden.
     const trackedPage = await open();
     await trackObjectURLs(trackedPage);
     await trackedPage.goto(converterURL);
@@ -673,25 +1074,26 @@ async function verifyPreviewPrefix(browser, open) {
     await trackedPage.locator("#keepExif").setChecked(true);
     await trackedPage
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "photo.jpg"),
+      ]);
     await trackedPage.locator("#quality").fill("75");
     await trackedPage.locator("#convertBtn").click();
-    await trackedPage
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(trackedPage, 60000);
     check(
-      (await trackedPage.evaluate(() => window.urls)).created === 1,
-      "one image object URL is created per conversion",
+      (await trackedPage.evaluate(() => window.urls)).created === 2,
+      "one image object URL is created per converted file",
     );
     await trackedPage.locator("#resetBtn").click();
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === 1,
-      "reset revokes the result URL",
+      (await trackedPage.evaluate(() => window.urls)).revoked === 2,
+      "reset revokes every result URL of the batch",
     );
     check(
       (await trackedPage.locator("#fileName").textContent()) ===
-        "Choose an image",
-      "reset clears the chosen file",
+        "Choose images",
+      "reset clears the chosen files",
     );
     check(
       (await trackedPage.locator("#outputFormat").inputValue()) === "jpeg" &&
@@ -701,24 +1103,28 @@ async function verifyPreviewPrefix(browser, open) {
       "reset restores the documented defaults",
     );
     check(
-      (await trackedPage.locator("#imageActions").isHidden()) &&
+      (await trackedPage.locator("#batchPanel").isHidden()) &&
+        (await trackedPage.locator("#resultList .result-row").count()) === 0 &&
         (await trackedPage.locator("#resultPreview").getAttribute("src")) ===
           null,
-      "reset clears the stale result and its preview source",
+      "reset clears the stale rows and their preview source",
     );
-    for (const fixture of ["photo.jpg", "photo.png"]) {
-      await trackedPage
-        .locator("#imageFile")
-        .setInputFiles(path.join(fixtures, fixture));
-      await trackedPage.locator("#convertBtn").click();
-      await trackedPage
-        .locator("#imageActions")
-        .waitFor({ state: "visible", timeout: 60000 });
-    }
+    await convertBatch(trackedPage, ["photo.jpg", "photo.png"], {
+      keepExif: false,
+    });
+    // Replacing the selection discards a finished batch before the next one is converted.
+    await trackedPage
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "alpha.png"));
+    check(
+      (await trackedPage.evaluate(() => window.urls)).revoked === 4,
+      "replacing a batch releases every URL it owned",
+    );
+    await convertBatch(trackedPage, ["alpha.png"], { keepExif: false });
     const urls = await trackedPage.evaluate(() => window.urls);
     check(
-      urls.created === 3 && urls.revoked === 2,
-      `each replaced result releases its URL, keeping only the current one: ${JSON.stringify(urls)}`,
+      urls.created === 5 && urls.revoked === 4,
+      `only the current batch keeps a live URL: ${JSON.stringify(urls)}`,
     );
     await trackedPage.evaluate(() =>
       window.dispatchEvent(new PageTransitionEvent("pagehide")),
@@ -729,18 +1135,96 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await trackedPage.close();
 
+    // A held converter substitute shows what invalidation must do to queued work: the stale batch
+    // stops after its active file, never creates a result URL, and never overlaps the next one.
+    const heldPage = await open();
+    await trackObjectURLs(heldPage);
+    await heldPage.goto(converterURL);
+    await holdConvertCalls(heldPage);
+    await heldPage
+      .locator("#imageFile")
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "alpha.png"),
+      ]);
+    await heldPage.locator("#convertBtn").click();
+    await heldPage
+      .locator('.result-row[data-status="converting"]')
+      .waitFor({ timeout: 30000 });
+    check(
+      (await heldPage.locator("#batchSummary").textContent()) ===
+        "Converting image 1 of 2…" &&
+        (await heldPage.locator("#convertBtn").isDisabled()),
+      "a running batch reports its progress and blocks a second submission",
+    );
+    // A setting change discards the pending batch; resubmitting queues behind the active call.
+    await heldPage.locator("#quality").fill("55");
+    check(
+      (await rowStates(heldPage)).every((row) => row.status === "ready"),
+      "a setting change clears the statuses of the batch it invalidates",
+    );
+    await heldPage.locator("#convertBtn").click();
+    await settleBatch(heldPage);
+    const held = await heldPage.evaluate(() => window.calls);
+    check(
+      held.peak === 1,
+      `the resubmitted batch waits for the active conversion instead of overlapping it: ${JSON.stringify(held)}`,
+    );
+    check(
+      held.files.join() === "photo.png,photo.png,alpha.png" && held.total === 3,
+      `the stale batch stops after the file it was already converting: ${held.files}`,
+    );
+    check(
+      (await rowStates(heldPage)).map((row) => row.status).join() ===
+        "done,done" &&
+        (await heldPage.evaluate(() => window.urls)).created === 2,
+      "only the resubmitted batch produces results",
+    );
+    // Reset during a pending conversion discards the late result instead of showing it.
+    await heldPage.locator("#resetBtn").click();
+    await heldPage
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "photo.png"));
+    await heldPage.locator("#convertBtn").click();
+    await heldPage
+      .locator('.result-row[data-status="converting"]')
+      .waitFor({ timeout: 30000 });
+    await heldPage.locator("#resetBtn").click();
+    check(
+      (await heldPage.locator("#batchPanel").isHidden()) &&
+        !(await heldPage.locator("#convertBtn").isDisabled()),
+      "reset clears a pending batch and allows another one",
+    );
+    await releaseConversion(heldPage);
+    await heldPage.waitForTimeout(500);
+    const heldUrls = await heldPage.evaluate(() => window.urls);
+    check(
+      (await heldPage.locator("#batchPanel").isHidden()) &&
+        (await heldPage.evaluate(() => window.calls)).total === 4 &&
+        heldUrls.created === 2 &&
+        heldUrls.revoked === 2,
+      `a discarded conversion creates no result and leaks no URL: ${JSON.stringify(heldUrls)}`,
+    );
+    await heldPage.close();
+
     if (heicFixtures) {
-      // A pending conversion must not resurface after the file is replaced.
+      // A pending conversion must not resurface after the file is replaced, and the replacement
+      // must not decode while the discarded HEIC still owns the shared decoder.
       const racedPage = await open();
       let releaseDecoder;
       await racedPage.route(decoderURL, async (route) => {
         await new Promise((resolve) => (releaseDecoder = resolve));
         await route.continue();
       });
+      await trackObjectURLs(racedPage);
       await racedPage.goto(converterURL);
+      await trackConvertCalls(racedPage);
       await racedPage
         .locator("#imageFile")
-        .setInputFiles(path.join(fixtures, "photo.heic"));
+        .setInputFiles([
+          path.join(fixtures, "photo.heic"),
+          path.join(fixtures, "photo.png"),
+        ]);
       const requested = racedPage.waitForRequest(decoderURL, {
         timeout: 30000,
       });
@@ -751,24 +1235,62 @@ async function verifyPreviewPrefix(browser, open) {
         .setInputFiles(path.join(fixtures, "photo.png"));
       // PNG output names the result photo.png, so a resurfacing photo.heic result is visible.
       await racedPage.locator("#outputFormat").selectOption("png");
+      await racedPage.locator("#convertBtn").click();
       const pending = racedPage.waitForResponse(decoderURL, { timeout: 60000 });
       releaseDecoder();
       await pending;
-      await racedPage.locator("#convertBtn").click();
-      await racedPage
-        .locator("#imageActions")
-        .waitFor({ state: "visible", timeout: 60000 });
+      await waitBatch(racedPage, 60000);
+      const raced = await rowStates(racedPage);
       check(
-        (await racedPage.locator("#resultName").textContent()) === "photo.png",
-        "the replaced file's conversion is the one shown",
+        raced.length === 1 && raced[0].download === "photo.png",
+        "the replaced batch is the one shown",
+      );
+      const racedCalls = await racedPage.evaluate(() => window.calls);
+      check(
+        racedCalls.peak === 1 &&
+          racedCalls.files.join() === "photo.heic,photo.png",
+        `the queued batch waits for the HEIC decoder and the stale one stops: ${JSON.stringify(racedCalls)}`,
+      );
+      check(
+        (await racedPage.evaluate(() => window.urls)).created === 1,
+        "the discarded HEIC conversion creates no result URL",
       );
       // Give the discarded HEIC conversion time to finish after the replacement.
       await racedPage.waitForTimeout(4000);
       check(
-        (await racedPage.locator("#resultName").textContent()) === "photo.png",
+        (await rowStates(racedPage))[0].download === "photo.png",
         "a conversion started before the replacement stays discarded",
       );
       await racedPage.close();
+
+      // A batch of HEIC photos reuses one decoder, so its conversions must stay serialized.
+      const heicPage = await open();
+      await heicPage.goto(converterURL);
+      await trackConvertCalls(heicPage);
+      const heicBatch = await convertBatch(
+        heicPage,
+        ["photo.heic", "gps.heic", "untagged.heic"],
+        { format: "jpeg", keepExif: true },
+      );
+      check(
+        heicBatch.every((row) => row.status === "done"),
+        "a batch of HEIC photos converts through the shared decoder",
+      );
+      const heicCalls = await heicPage.evaluate(() => window.calls);
+      check(
+        heicCalls.peak === 1 && heicCalls.total === 3,
+        `repeated HEIC conversions never overlap: ${JSON.stringify(heicCalls)}`,
+      );
+      verify(
+        await downloadRow(heicPage, 1, "gps.jpg"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--exif-from",
+        path.join(fixtures, "gps.heic"),
+      );
+      await heicPage.close();
 
       // A blocked decoder download must be reported and stay retryable.
       const blockedPage = await open();
@@ -808,15 +1330,36 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await mobilePage.goto(converterURL);
     await noOverflow(mobilePage, 375);
+    // A long filename must wrap inside its row instead of widening the page.
+    const longName = `${"holiday-photo-".repeat(9)}1.png`;
+    fs.copyFileSync(
+      path.join(fixtures, "photo.png"),
+      path.join(fixtures, longName),
+    );
     await mobilePage
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, longName),
+        path.join(fixtures, "alpha.png"),
+        path.join(fixtures, "photo.jpg"),
+      ]);
     await noOverflow(mobilePage, 375);
+    check(
+      (await mobilePage.locator("#convertLabel").textContent()) ===
+        "Convert 3 images",
+      "a batch is announced as such on a narrow screen",
+    );
     await mobilePage.locator("#convertBtn").tap();
-    await mobilePage
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(mobilePage, 60000);
     await noOverflow(mobilePage, 375);
+    check(
+      await mobilePage
+        .locator("#resultList .result-row")
+        .first()
+        .locator(".row-download")
+        .isVisible(),
+      "each result keeps its own download control on a narrow screen",
+    );
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await mobilePage.screenshot({

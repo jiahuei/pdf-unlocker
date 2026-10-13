@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Convert HEIC photos to JPG in your browser, or convert between JPEG, PNG and WebP. Images are processed on your device and are never uploaded."
+      content="Convert HEIC photos to JPG in your browser, one or many at a time, or convert between JPEG, PNG and WebP. Images are processed on your device and are never uploaded."
     />
     <meta name="theme-color" content="#465bd8" />
     <title>HEIC to JPG Image Converter — File tools</title>
@@ -39,10 +39,11 @@
     </header>
     <main id="main" class="page">
       <header class="page-heading">
-        <h1>Convert your image</h1>
+        <h1>Convert your images</h1>
         <p class="intro">
-          Turn a HEIC photo into a widely usable JPG, or convert between JPEG,
-          PNG and WebP. Your image is processed on this device.
+          Turn HEIC photos into widely usable JPG files, or convert between
+          JPEG, PNG and WebP. Choose one image or a whole batch; every image is
+          processed on this device.
         </p>
         <div class="trust-row">
           <span>Images stay in your browser</span
@@ -52,26 +53,28 @@
       <div class="workspace">
         <section class="panel source-panel" aria-labelledby="source-title">
           <div class="panel-heading">
-            <h2 id="source-title"><span class="step">01</span> Your image</h2>
+            <h2 id="source-title"><span class="step">01</span> Your images</h2>
             <span class="badge">Browser only</span>
           </div>
           <form id="convertForm" novalidate>
-            <label class="field-label" for="imageFile">Choose an image</label>
+            <label class="field-label" for="imageFile">Choose images</label>
             <div class="file-drop" id="fileDrop">
               <span class="file-symbol" aria-hidden="true">↥</span
-              ><strong id="fileName">Choose an image</strong
-              ><span id="fileHelp">or drop it here</span
+              ><strong id="fileName">Choose images</strong
+              ><span id="fileHelp">or drop them here</span
               ><input
                 type="file"
                 id="imageFile"
                 name="image"
+                multiple
                 accept=".heic,.heif,image/heic,image/heif,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
                 aria-describedby="fileHelp filePrivacy"
               />
             </div>
             <p class="help" id="filePrivacy">
               HEIC, JPEG, PNG and WebP files are processed locally and are never
-              uploaded.
+              uploaded. Choose several files to convert them in one batch; a new
+              selection replaces the current one.
             </p>
             <div class="option-field">
               <label class="field-label" for="outputFormat"
@@ -127,7 +130,8 @@
               </p>
             </div>
             <button class="button primary wide" id="convertBtn" type="submit">
-              Convert image <span aria-hidden="true">→</span></button
+              <span id="convertLabel">Convert image</span>
+              <span aria-hidden="true">→</span></button
             ><button class="reset-button" id="resetBtn" type="button">
               Start over
             </button>
@@ -141,18 +145,18 @@
           </form>
           <noscript
             ><p class="message error">
-              Enable JavaScript to convert your image.
+              Enable JavaScript to convert your images.
             </p></noscript
           >
           <div class="privacy-note">
             <span aria-hidden="true">◇</span>
-            <p>Your image never leaves this device. No account, no upload.</p>
+            <p>Your images never leave this device. No account, no upload.</p>
           </div>
         </section>
         <section class="panel preview-panel" aria-labelledby="preview-title">
           <div class="panel-heading">
             <h2 id="preview-title">
-              <span class="step">02</span> Your conversion
+              <span class="step">02</span> Your conversions
             </h2>
             <span class="badge neutral" id="previewBadge"
               >No conversion yet</span
@@ -166,14 +170,18 @@
             </div>
             <img id="resultPreview" alt="" hidden />
           </div>
-          <div id="imageActions" class="download-section" hidden>
-            <p class="result-label">Your converted image is ready</p>
-            <p id="resultName" class="result-name"></p>
-            <p id="resultMeta" class="result-meta"></p>
-            <a id="downloadBtn" class="button primary wide" download
-              >Download image <span aria-hidden="true">↓</span></a
-            >
-            <p class="help">The original file stays unchanged.</p>
+          <div id="batchPanel" class="download-section" hidden>
+            <p
+              id="batchSummary"
+              class="batch-summary"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <ul id="resultList" class="result-list"></ul>
+            <p class="help">
+              Download each converted image separately. The original files stay
+              unchanged.
+            </p>
           </div>
         </section>
       </div>
@@ -257,6 +265,12 @@
               images can also reach your browser's own canvas limit.
             </li>
             <li>
+              A batch is converted one file at a time, in the order you chose. A
+              file that cannot be converted fails on its own and does not stop
+              the rest. Converted images are kept in your browser's memory until
+              you replace them or leave the page.
+            </li>
+            <li>
               WebP output needs browser support; the option is disabled where
               your browser cannot write WebP.
             </li>
@@ -271,8 +285,8 @@
           <li>
             <span class="step">1</span>
             <div>
-              <h3>Choose your image</h3>
-              <p>Select a photo from your device, or drop it here.</p>
+              <h3>Choose your images</h3>
+              <p>Select one or more photos, or drop them here.</p>
             </div>
           </li>
           <li>
@@ -286,7 +300,7 @@
             <span class="step">3</span>
             <div>
               <h3>Preview and save</h3>
-              <p>Check the result, then download the converted copy.</p>
+              <p>Check each result, then download the converted copies.</p>
             </div>
           </li>
         </ol>
