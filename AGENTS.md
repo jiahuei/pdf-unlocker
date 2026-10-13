@@ -4,37 +4,9 @@ This `AGENTS.md` file provides comprehensive guidance for OpenAI Codex, Claude C
 
 The user's job as a senior software engineer is dependent on you implementing clean code with elegant architecture.
 
-## Repository Structure
+## Project specification
 
-```text
-.
-├── src/
-│   ├── index.html            # Tools directory linking both tools
-│   ├── pdf-unlocker.html     # Accessible PDF interface
-│   ├── image-converter.html  # Image interface and published format matrix
-│   ├── app.js                # PDF UI state, runtime loading and preview
-│   ├── password-schemes.js   # Pure local statement password derivation
-│   ├── pdf-engine.py         # Browser-local document decryption
-│   ├── image-app.js          # Image UI state, preview, download and reset
-│   ├── image-converter.js    # Format table, input detection and conversion pipeline
-│   ├── debug.js              # Opt-in Eruda console shared by both tool pages
-│   ├── style.css             # Local responsive styling shared by all pages
-│   └── assets/               # Favicons, touch icons and web manifest
-├── .github/workflows/
-│   ├── deploy.yml            # Publishes main and same-repository PR snapshots
-│   └── lint.yml              # Prettier, Ruff and Node logic checks
-├── .prettierrc               # Repository-local formatting defaults
-├── .prettierignore           # Generated files and local reference exclusions
-├── ruff.toml                 # Python lint/format settings targeting Python 3.11
-├── package.json              # Pinned development-only Prettier and scripts
-├── package-lock.json         # Reproducible npm installation
-├── scripts/                  # Static Pages packaging and preview comments
-├── tests/                    # Python document, Node logic and Playwright browser tests
-├── tasks/                    # Local, untracked completion records and plans
-├── AGENTS.md                 # Repository guidance
-├── README.md                 # Usage, format matrix and local setup
-└── LICENSE                   # MIT license
-```
+Read [SPEC.md](SPEC.md) before changing application or deployment code, especially the sections relevant to the task. It contains the repository structure, architecture, behavior contracts, runtime dependencies and deployment invariants. Preserve those contracts and update the specification whenever implementation behavior changes. Use [README.md](README.md) for usage, setup and verification commands.
 
 ## Core Principles
 
@@ -98,23 +70,14 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - Always check whether any project documentation needs updating, even when documentation was not mentioned in the task. Update all affected docs before reporting completion.
 - Keep verification proportional to the scope and risk of the change.
 
-#### Local development environment
+#### Local development and verification
 
-- This is a static browser application with no build step. `src/index.html` is the tools directory; `src/pdf-unlocker.html` and `src/image-converter.html` are the tools. Each page loads only its own scripts, so the home page and the converter never initialise Pyodide or PDF.js. `src/pdf-engine.py` is executed through Pyodide.
-- Serve the deployed directory from the repository root: `python3 -m http.server 8000 --bind 127.0.0.1 --directory src`, then open `http://127.0.0.1:8000`.
-- Internet access is needed to load CDN dependencies and Python packages. File contents, images and passwords are processed in the browser; do not add document, image or password uploads.
-- Runtime dependencies are Pyodide 0.23.4 with its micropip/cryptography packages, pypdf 4.3.1, PDF.js 3.11.174 with its matching worker, and libheif-js 1.23.5 (LGPL-3.0) for HEIC input. Eruda 3.4.3 loads only when enabled. Styling is local. Inspect the source before changing dependency versions, and keep the third-party licence attribution in `README.md`.
-- `package.json` provides development-only formatting tooling; it does not add a build step or browser dependency. Follow [README.md](README.md#development-and-verification) for formatting setup, isolated document-test dependencies and the optional browser suites. Do not run test commands copied from another repository or claim unrun checks passed.
-- For PDF changes, run the relevant Python and browser regressions using synthetic PDFs: correct and incorrect passwords, an unencrypted PDF, malformed input, preview pagination, download, reset and library-load failure as applicable. Verify downloaded PDF contents and encryption state rather than only a success message.
-- Statement methods implement the documented RHB, TNG eWallet and Maybank formats; manual input remains verbatim with the existing blank-password default. Derive passwords only on explicit unlock, without storing/logging or displaying the generated value. Scheme/detail edits must cancel stale operations, and reset clears all method fields back to their HTML defaults, including the prefilled 1 November 1993 statement dates. Run `node --test tests/password-schemes.test.cjs` and real scheme-encrypted browser fixtures when changing these rules.
-- The converter publishes a fixed matrix: HEIC/HEIF, JPEG, PNG and WebP inputs to JPEG, PNG or WebP outputs. Recognise inputs from their bytes, not their MIME type or extension, since camera files often declare neither. Decode JPEG/PNG/WebP natively and HEIF through libheif-js; a failed decoder load must stay retryable, so load it through a script element rather than a cached dynamic import. Apply source ICC/NCLX colours before exporting to sRGB: the pinned libheif API supplies the profiles, ICC uses a temporary tagged PNG and native colour management, and supported SDR NCLX uses the matching ImageData colour space/transfer. Non-RGB ICC profiles (including grayscale) and unsupported NCLX profiles fail explicitly. Keep the independently verified colour fixtures and their CC0 attribution. Orientation is applied to the output pixels; for WebP, neutralize EXIF orientation in the private input bytes before native decoding and apply its rotation/reflection once during export, since browsers differ in WebP EXIF support. Source metadata is dropped unless the user opts in, transparency is composited over white for JPEG only, animated and multi-image inputs (including JPEG/MPO with multiple MPF images) are rejected rather than reduced to one frame, and the 40 MB file and 50 megapixel limits stay in agreement with `README.md`, the page copy and `tests/image-converter.test.cjs`. Close native bitmaps even when dimensions fail validation. Verify an encoded blob's MIME type before offering it, because `canvas.toBlob` silently returns PNG for an encoder the browser lacks.
-- Retained EXIF is transplanted into the encoded bytes, because canvas writes pixels only. Copy the whole TIFF block, reset its orientation tag and update existing IFD0/Exif IFD dimension tags to match the upright output pixels without changing thumbnail geometry, refuse a block too large for a JPEG APP1 segment instead of writing an out-of-spec file, report what was kept in the result line, and never copy XMP. Read a HEIC Exif item through libheif's C API, whose WASM32 ABI puts a 12-byte `heif_error` buffer before the documented arguments and returns the item data with its four-byte offset prefix; follow that big-endian offset relative to the end of the prefix instead of scanning for a TIFF signature. Accept JPEG marker-fill bytes before APP1 segments. Keep the checkbox off by default and cleared by reset, so a photo is never shared with its GPS position by accident.
-- Inspect relevant desktop and mobile screenshots for layout changes. Distinguish browser mobile emulation from physical-device verification, and report physical iOS HEIC checks separately.
-- Verify a real camera photo with `TEST_HEIC=/path/to/photo.heic node tests/image-browser.test.cjs`, which checks orientation, geometry, colours and the retained EXIF against an independent libheif, LittleCMS and Pillow decode. Never commit real photos or their derivatives: they carry GPS, device and timestamp metadata, and synthetic fixtures belong in `tests/image_fixtures.py` instead.
-- `.github/workflows/deploy.yml` publishes current remote `main` at the site root and each open same-repository pull request beneath `pr-preview/<number>/`. Only regular Git blobs from `src/` are packaged; do not execute pull-request scripts or include tooling/docs in the artifact. Fork previews are excluded. Keep all browser assets reachable beneath the project and preview paths.
-- Main pushes, relevant pull-request events and manual dispatch rebuild all snapshots. Preview comments are created/updated only after successful deployment; closing a pull request removes its preview and updates the existing comment. Preserve the shared `pages` concurrency group and its non-canceling behavior.
-- Run `node --test tests/pages-preview.test.cjs` for packaging/comment changes. Verify current-main production, immutable PR source commits, source boundaries, fork/close handling and comment idempotence. Hosted preview URLs and comments require a successful Actions deployment; do not claim local tests prove deployment.
-- Preserve the MIT license and attribution in `LICENSE`.
+- Serve the application from the repository root: `python3 -m http.server 8000 --bind 127.0.0.1 --directory src`, then open `http://127.0.0.1:8000`.
+- Follow [README.md](README.md#development-and-verification) for formatting setup, isolated test dependencies and browser commands. Do not copy test commands from another repository or claim unrun checks passed.
+- Select tests using [SPEC.md verification coverage](SPEC.md#verification-coverage). For PDF or image changes, verify downloaded contents and metadata independently rather than checking only a success message. Run the statement-password Node and browser cases for password-rule changes, and the Pages suite for packaging/comment changes.
+- Inspect relevant desktop and mobile screenshots for layout changes. Distinguish mobile emulation from physical-device verification and report physical iOS checks separately.
+- For HEIC changes, use the documented `TEST_HEIC` option to verify a real camera photo. Never commit real photos or their derivatives; keep synthetic regression fixtures in `tests/image_fixtures.py`.
+- Inspect source declarations before changing dependencies. Preserve the MIT licence and attribution in `LICENSE` and third-party attribution in `README.md`.
 
 Before reporting completion, review the final diff and ask:
 
