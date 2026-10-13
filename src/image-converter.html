@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Convert HEIC photos to JPG in your browser, or convert between JPEG, PNG and WebP. Images are processed on your device and are never uploaded."
+    />
+    <meta name="theme-color" content="#465bd8" />
+    <title>HEIC to JPG Image Converter — File tools</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <link rel="shortcut icon" href="assets/favicon.ico" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <link rel="manifest" href="assets/site.webmanifest" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="debug.js" defer></script>
+    <script src="image-converter.js" defer></script>
+    <script src="image-app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="index.html" aria-label="File tools home"
+          ><span class="brand-mark" aria-hidden="true">▤</span
+          ><span>File<span class="brand-light"> / tools</span></span></a
+        >
+        <nav class="tool-nav" aria-label="Tools">
+          <a href="pdf-unlocker.html">PDF Unlocker</a
+          ><a href="image-converter.html" aria-current="page"
+            >Image Converter</a
+          >
+        </nav>
+        <a class="source-link" href="https://github.com/jiahuei/pdf-unlocker"
+          >View source <span aria-hidden="true">↗</span></a
+        >
+      </div>
+    </header>
+    <main id="main" class="page">
+      <header class="page-heading">
+        <h1>Convert your image</h1>
+        <p class="intro">
+          Turn a HEIC photo into a widely usable JPG, or convert between JPEG,
+          PNG and WebP. Your image is processed on this device.
+        </p>
+        <div class="trust-row">
+          <span>Images stay in your browser</span
+          ><span>Free, with no sign-up</span>
+        </div>
+      </header>
+      <div class="workspace">
+        <section class="panel source-panel" aria-labelledby="source-title">
+          <div class="panel-heading">
+            <h2 id="source-title"><span class="step">01</span> Your image</h2>
+            <span class="badge">Browser only</span>
+          </div>
+          <form id="convertForm" novalidate>
+            <label class="field-label" for="imageFile">Choose an image</label>
+            <div class="file-drop" id="fileDrop">
+              <span class="file-symbol" aria-hidden="true">↥</span
+              ><strong id="fileName">Choose an image</strong
+              ><span id="fileHelp">or drop it here</span
+              ><input
+                type="file"
+                id="imageFile"
+                name="image"
+                accept=".heic,.heif,image/heic,image/heif,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                aria-describedby="fileHelp filePrivacy"
+              />
+            </div>
+            <p class="help" id="filePrivacy">
+              HEIC, JPEG, PNG and WebP files are processed locally and are never
+              uploaded.
+            </p>
+            <div class="option-field">
+              <label class="field-label" for="outputFormat"
+                >Output format</label
+              >
+              <select
+                id="outputFormat"
+                name="outputFormat"
+                aria-describedby="formatHelp"
+              ></select>
+              <p class="help" id="formatHelp">
+                JPEG is the safest choice for sharing and uploading. PNG keeps
+                every pixel and any transparency; WebP makes the smallest lossy
+                file.
+              </p>
+            </div>
+            <div class="option-field" id="qualityField">
+              <label class="field-label" for="quality"
+                >Quality
+                <output id="qualityValue" for="quality">80</output></label
+              >
+              <input
+                type="range"
+                id="quality"
+                name="quality"
+                min="50"
+                max="100"
+                step="5"
+                value="80"
+                aria-describedby="qualityHelp"
+              />
+              <p class="help" id="qualityHelp">
+                Applies to JPEG and WebP output. Lower values give smaller
+                files.
+              </p>
+            </div>
+            <div class="option-field">
+              <label class="checkbox-field" for="keepExif">
+                <input
+                  type="checkbox"
+                  id="keepExif"
+                  name="keepExif"
+                  aria-describedby="exifHelp"
+                />
+                <span>Keep location and shooting details (EXIF)</span>
+              </label>
+              <p class="help" id="exifHelp">
+                Off by default. When on, the source EXIF, including any GPS
+                position, is copied into the converted file. If the original
+                image contains orientation metadata, the converter uses it to
+                rotate or mirror the image. Leave it off before sharing a photo
+                publicly.
+              </p>
+            </div>
+            <button class="button primary wide" id="convertBtn" type="submit">
+              Convert image <span aria-hidden="true">→</span></button
+            ><button class="reset-button" id="resetBtn" type="button">
+              Start over
+            </button>
+            <p
+              id="message"
+              class="message"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></p>
+          </form>
+          <noscript
+            ><p class="message error">
+              Enable JavaScript to convert your image.
+            </p></noscript
+          >
+          <div class="privacy-note">
+            <span aria-hidden="true">◇</span>
+            <p>Your image never leaves this device. No account, no upload.</p>
+          </div>
+        </section>
+        <section class="panel preview-panel" aria-labelledby="preview-title">
+          <div class="panel-heading">
+            <h2 id="preview-title">
+              <span class="step">02</span> Your conversion
+            </h2>
+            <span class="badge neutral" id="previewBadge"
+              >No conversion yet</span
+            >
+          </div>
+          <div class="preview-frame">
+            <div class="preview-empty" id="previewEmpty">
+              <span class="preview-symbol" aria-hidden="true">▣</span>
+              <h3>Image preview</h3>
+              <p>Convert an image to preview the result here.</p>
+            </div>
+            <img id="resultPreview" alt="" hidden />
+          </div>
+          <div id="imageActions" class="download-section" hidden>
+            <p class="result-label">Your converted image is ready</p>
+            <p id="resultName" class="result-name"></p>
+            <p id="resultMeta" class="result-meta"></p>
+            <a id="downloadBtn" class="button primary wide" download
+              >Download image <span aria-hidden="true">↓</span></a
+            >
+            <p class="help">The original file stays unchanged.</p>
+          </div>
+        </section>
+      </div>
+      <section class="how-section" aria-labelledby="formats-title">
+        <div>
+          <h2 id="formats-title">Supported conversions</h2>
+          <p class="section-note">
+            Every conversion below runs in your browser. The HEIC decoder is
+            downloaded once, the first time you convert a HEIC photo.
+          </p>
+        </div>
+        <div class="matrix-card">
+          <table class="matrix">
+            <caption>
+              Input formats against the output formats they can be converted to
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Input</th>
+                <th scope="col">JPG</th>
+                <th scope="col">PNG</th>
+                <th scope="col">WebP</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">HEIC / HEIF</th>
+                <td>✓</td>
+                <td>✓</td>
+                <td>✓</td>
+              </tr>
+              <tr>
+                <th scope="row">JPEG</th>
+                <td>✓</td>
+                <td>✓</td>
+                <td>✓</td>
+              </tr>
+              <tr>
+                <th scope="row">PNG</th>
+                <td>✓</td>
+                <td>✓</td>
+                <td>✓</td>
+              </tr>
+              <tr>
+                <th scope="row">WebP</th>
+                <td>✓</td>
+                <td>✓</td>
+                <td>✓</td>
+              </tr>
+            </tbody>
+          </table>
+          <ul class="notes-list">
+            <li>
+              HEIC input covers HEVC-encoded photos, which is what iPhone and
+              recent Android cameras write. AVIF, animated HEIF and HEIC burst
+              files are not supported.
+            </li>
+            <li>
+              Orientation and supported colour profiles are applied before
+              export to sRGB. Source colour profiles are not copied. Unsupported
+              HEIC colour spaces, including grayscale ICC profiles and HDR, are
+              rejected.
+            </li>
+            <li>
+              EXIF, including the GPS position, is dropped unless you select
+              <strong>Keep location and shooting details</strong>. If the
+              original image contains orientation metadata, the converter uses
+              it to rotate or mirror the image. XMP is never copied.
+            </li>
+            <li>
+              Transparent pixels are placed on white for JPEG output. PNG and
+              WebP keep transparency.
+            </li>
+            <li>
+              Animated GIF, APNG and animated WebP files are rejected rather
+              than quietly keeping their first frame, as are files holding
+              several images.
+            </li>
+            <li>
+              Limits are 40 MB per file and 50 megapixels decoded. Very large
+              images can also reach your browser's own canvas limit.
+            </li>
+            <li>
+              WebP output needs browser support; the option is disabled where
+              your browser cannot write WebP.
+            </li>
+          </ul>
+        </div>
+      </section>
+      <section class="how-section" aria-labelledby="how-title">
+        <div>
+          <h2 id="how-title">How to convert an image</h2>
+        </div>
+        <ol class="steps-list">
+          <li>
+            <span class="step">1</span>
+            <div>
+              <h3>Choose your image</h3>
+              <p>Select a photo from your device, or drop it here.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step">2</span>
+            <div>
+              <h3>Pick the output format</h3>
+              <p>Choose JPG, PNG or WebP and a quality for lossy output.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step">3</span>
+            <div>
+              <h3>Preview and save</h3>
+              <p>Check the result, then download the converted copy.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+      <p class="connection-note">
+        Internet is needed once to load the HEIC decoder. Your images are never
+        uploaded.
+      </p>
+    </main>
+    <footer>
+      <div class="footer-inner">
+        <p>
+          <strong>File / tools</strong><br />PDF Unlocker and Image Converter,
+          processed in your browser.
+        </p>
+        <p>
+          Made by <a href="https://github.com/jiahuei">Jia-Huei Tan</a> ·
+          <a href="https://github.com/jiahuei/pdf-unlocker/blob/main/LICENSE"
+            >MIT license</a
+          ><br /><a href="https://github.com/jiahuei/pdf-unlocker"
+            >Open source ↗</a
+          >
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

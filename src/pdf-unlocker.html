@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Unlock a password-protected PDF in your browser. Preview the pages and download an unlocked copy, with no document uploads."
+    />
+    <meta name="theme-color" content="#465bd8" />
+    <title>PDF Unlocker — File tools</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <link rel="shortcut icon" href="assets/favicon.ico" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <link rel="manifest" href="assets/site.webmanifest" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="debug.js" defer></script>
+    <script src="password-schemes.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="index.html" aria-label="File tools home"
+          ><span class="brand-mark" aria-hidden="true">▤</span
+          ><span>File<span class="brand-light"> / tools</span></span></a
+        >
+        <nav class="tool-nav" aria-label="Tools">
+          <a href="pdf-unlocker.html" aria-current="page">PDF Unlocker</a
+          ><a href="image-converter.html">Image Converter</a>
+        </nav>
+        <a class="source-link" href="https://github.com/jiahuei/pdf-unlocker"
+          >View source <span aria-hidden="true">↗</span></a
+        >
+      </div>
+    </header>
+    <main id="main" class="page">
+      <header class="page-heading">
+        <h1>Unlock your PDF</h1>
+        <p class="intro">
+          Enter the PDF password or choose a statement password method, then
+          preview and download an unlocked copy.
+        </p>
+        <div class="trust-row">
+          <span>Files stay in your browser</span
+          ><span>Free, with no sign-up</span>
+        </div>
+      </header>
+      <div class="workspace">
+        <section class="panel document-panel" aria-labelledby="document-title">
+          <div class="panel-heading">
+            <h2 id="document-title">
+              <span class="step">01</span> Your document
+            </h2>
+            <span class="badge">Browser only</span>
+          </div>
+          <form id="unlockForm" novalidate>
+            <label class="field-label" for="pdfFile">Choose a PDF</label>
+            <div class="file-drop" id="fileDrop">
+              <span class="file-symbol" aria-hidden="true">↥</span
+              ><strong id="fileName">Choose a PDF file</strong
+              ><span id="fileHelp">or drop it here</span
+              ><input
+                type="file"
+                id="pdfFile"
+                name="pdf"
+                accept=".pdf,application/pdf"
+                aria-describedby="fileHelp filePrivacy"
+              />
+            </div>
+            <p class="help" id="filePrivacy">
+              Your document is processed locally and is never uploaded.
+            </p>
+            <div class="password-field">
+              <label class="field-label" for="passwordScheme"
+                >Password method</label
+              >
+              <select
+                id="passwordScheme"
+                name="passwordScheme"
+                aria-describedby="schemeHelp"
+              >
+                <option value="manual">Enter a password</option>
+                <option value="rhb">RHB statement</option>
+                <option value="tng">TNG eWallet statement</option>
+                <option value="maybank">Maybank statement</option>
+              </select>
+              <p class="help" id="schemeHelp">
+                Choose the method in your statement's password instructions.
+                Details are used locally when you select Unlock PDF.
+              </p>
+            </div>
+            <fieldset class="password-details" id="manualFields">
+              <legend>Manual password</legend>
+              <label class="field-label" for="password">PDF password</label>
+              <div class="password-wrap">
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  placeholder="Enter the password"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-describedby="passwordHelp"
+                /><button
+                  type="button"
+                  id="togglePassword"
+                  aria-label="Show password"
+                  aria-pressed="false"
+                >
+                  Show
+                </button>
+              </div>
+              <p class="help" id="passwordHelp">
+                Leave empty to use the default password: <code>password</code>.
+                For a Maybank password chosen during registration, enter it
+                here.
+              </p>
+            </fieldset>
+            <fieldset class="password-details" id="rhbFields" hidden disabled>
+              <legend>RHB statement details</legend>
+              <label class="field-label" for="rhbSuffix"
+                >Last four ID or business registration characters</label
+              >
+              <input
+                id="rhbSuffix"
+                name="rhbSuffix"
+                type="text"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="789A"
+                aria-describedby="rhbSuffixHelp"
+              />
+              <p class="help" id="rhbSuffixHelp">
+                Enter only the last four characters, keeping the letter case
+                from your ID or registration number.
+              </p>
+              <label class="field-label" for="rhbDate"
+                >Date of birth or business establishment</label
+              >
+              <input
+                id="rhbDate"
+                name="rhbDate"
+                type="date"
+                value="1993-11-01"
+                autocomplete="off"
+                aria-describedby="rhbDateHelp"
+              />
+              <p class="help" id="rhbDateHelp">
+                The password joins those four characters with the date in YYMMDD
+                format. Example: 789A and 29 July 1981 give
+                <code>789A810729</code>.
+              </p>
+            </fieldset>
+            <fieldset class="password-details" id="tngFields" hidden disabled>
+              <legend>TNG eWallet statement details</legend>
+              <label class="field-label" for="tngMobile"
+                >Registered Malaysian mobile number</label
+              >
+              <input
+                id="tngMobile"
+                name="tngMobile"
+                type="tel"
+                autocomplete="off"
+                placeholder="+6011-23456789"
+                aria-describedby="tngMobileHelp"
+              />
+              <p class="help" id="tngMobileHelp">
+                Use the number registered with TNG eWallet. Spaces, phone
+                separators, +60 country code and the local leading 0 are
+                removed. Example: +6011-23456789 gives <code>1123456789</code>.
+              </p>
+            </fieldset>
+            <fieldset
+              class="password-details"
+              id="maybankFields"
+              hidden
+              disabled
+            >
+              <legend>Maybank statement details</legend>
+              <label class="field-label" for="maybankDate">Date of birth</label>
+              <input
+                id="maybankDate"
+                name="maybankDate"
+                type="date"
+                value="1993-11-01"
+                autocomplete="off"
+                aria-describedby="maybankDateHelp"
+              />
+              <p class="help" id="maybankDateHelp">
+                The password uses DD, the English three-letter month and YYYY.
+                Example: 1 January 1980 gives <code>01Jan1980</code>. If you
+                chose a password during registration, select Enter a password.
+              </p>
+            </fieldset>
+            <div
+              class="runtime-status"
+              id="runtimeStatus"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="status-dot" aria-hidden="true"></span
+              ><span id="runtimeText">Getting ready…</span
+              ><button type="button" id="retryBtn" hidden>Retry</button>
+            </div>
+            <button class="button primary wide" id="unlockBtn" type="submit">
+              Unlock PDF <span aria-hidden="true">→</span></button
+            ><button class="reset-button" id="resetBtn" type="button">
+              Start over
+            </button>
+            <p
+              id="message"
+              class="message"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></p>
+          </form>
+          <noscript
+            ><p class="message error">
+              Enable JavaScript to unlock and preview your PDF.
+            </p></noscript
+          >
+          <div class="privacy-note">
+            <span aria-hidden="true">◇</span>
+            <p>Your document and password details stay on this device.</p>
+          </div>
+        </section>
+        <section class="panel preview-panel" aria-labelledby="preview-title">
+          <div class="panel-heading">
+            <h2 id="preview-title">
+              <span class="step">02</span> Your preview
+            </h2>
+            <span class="badge neutral" id="previewBadge">No preview yet</span>
+          </div>
+          <div class="preview-frame" id="pdfPreview" aria-busy="false">
+            <div class="preview-empty" id="previewEmpty">
+              <span class="preview-symbol" aria-hidden="true">▤</span>
+              <h3>Document preview</h3>
+              <p id="previewHint">
+                Unlock your document to preview its pages here.
+              </p>
+            </div>
+            <canvas
+              id="pdfCanvas"
+              aria-label="Preview of the unlocked PDF page"
+              hidden
+            ></canvas>
+          </div>
+          <div class="preview-controls" id="previewControls" hidden>
+            <button
+              type="button"
+              id="prevPage"
+              class="icon-button"
+              aria-label="Previous page"
+            >
+              ←
+            </button>
+            <p class="page-count" role="status" aria-live="polite">
+              Page <span id="pageNum">1</span> of <span id="pageCount">1</span>
+            </p>
+            <button
+              type="button"
+              id="nextPage"
+              class="icon-button"
+              aria-label="Next page"
+            >
+              →
+            </button>
+          </div>
+          <div id="pdfActions" class="download-section" hidden>
+            <p class="result-label">Your unlocked copy is ready</p>
+            <p id="resultName" class="result-name"></p>
+            <a id="downloadBtn" class="button primary wide" download
+              >Download PDF <span aria-hidden="true">↓</span></a
+            >
+            <p class="help">The original file stays unchanged.</p>
+          </div>
+        </section>
+      </div>
+      <section class="how-section" aria-labelledby="how-title">
+        <div>
+          <h2 id="how-title">How to unlock a PDF</h2>
+        </div>
+        <ol class="steps-list">
+          <li>
+            <span class="step">1</span>
+            <div>
+              <h3>Choose your PDF</h3>
+              <p>Select a document from your device.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step">2</span>
+            <div>
+              <h3>Choose a password method</h3>
+              <p>
+                Enter a password or the details from your statement
+                instructions.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="step">3</span>
+            <div>
+              <h3>Preview and save</h3>
+              <p>Download a copy that opens without it.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+      <p class="connection-note">
+        Internet is needed to load the processing libraries. Your PDF and
+        password stay on your device.
+      </p>
+    </main>
+    <footer>
+      <div class="footer-inner">
+        <p>
+          <strong>File / tools</strong><br />PDF Unlocker and Image Converter,
+          processed in your browser.
+        </p>
+        <p>
+          Made by <a href="https://github.com/jiahuei">Jia-Huei Tan</a> ·
+          <a href="https://github.com/jiahuei/pdf-unlocker/blob/main/LICENSE"
+            >MIT license</a
+          ><br /><a href="https://github.com/jiahuei/pdf-unlocker"
+            >Open source ↗</a
+          >
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

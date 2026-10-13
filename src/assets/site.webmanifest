@@ -1,6 +1,9 @@
 {
-  "name": "PDF Unlocker",
-  "short_name": "PDF Unlocker",
+  "name": "File tools",
+  "short_name": "File tools",
+  "description": "Browser-local PDF and image tools: remove a PDF password and convert HEIC photos to JPG.",
+  "start_url": "../",
+  "scope": "../",
   "icons": [
     {
       "src": "web-app-manifest-192x192.png",

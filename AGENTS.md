@@ -4,32 +4,9 @@ This `AGENTS.md` file provides comprehensive guidance for OpenAI Codex, Claude C
 
 The user's job as a senior software engineer is dependent on you implementing clean code with elegant architecture.
 
-## Repository Structure
+## Project specification
 
-```text
-.
-├── src/
-│   ├── index.html            # Accessible browser interface
-│   ├── style.css             # Local responsive styling
-│   ├── app.js                # UI state, runtime loading and PDF preview
-│   ├── password-schemes.js   # Pure local statement password derivation
-│   ├── pdf-engine.py         # Browser-local document decryption
-│   └── assets/               # Favicons, touch icons and web manifest
-├── .github/workflows/
-│   ├── deploy.yml            # Publishes main and same-repository PR snapshots
-│   └── lint.yml              # Prettier and Ruff checks
-├── .prettierrc               # Repository-local formatting defaults
-├── .prettierignore           # Generated files and local reference exclusions
-├── ruff.toml                 # Python lint/format settings targeting Python 3.11
-├── package.json              # Pinned development-only Prettier and scripts
-├── package-lock.json         # Reproducible npm installation
-├── scripts/                  # Static Pages packaging and preview comments
-├── tests/                    # Python document and Playwright browser tests
-├── tasks/                    # Local, untracked completion records and plans
-├── AGENTS.md                 # Repository guidance
-├── README.md                 # Usage and local setup
-└── LICENSE                   # MIT license
-```
+Read [SPEC.md](SPEC.md) before changing application or deployment code, especially the sections relevant to the task. It contains the repository structure, architecture, behavior contracts, runtime dependencies and deployment invariants. Preserve those contracts and update the specification whenever implementation behavior changes. Use [README.md](README.md) for usage, setup and verification commands.
 
 ## Core Principles
 
@@ -93,20 +70,14 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - Always check whether any project documentation needs updating, even when documentation was not mentioned in the task. Update all affected docs before reporting completion.
 - Keep verification proportional to the scope and risk of the change.
 
-#### Local development environment
+#### Local development and verification
 
-- This is a static browser application with no build step. `src/index.html` loads local CSS and JavaScript; `src/pdf-engine.py` is executed through Pyodide.
-- Serve the deployed directory from the repository root: `python3 -m http.server 8000 --bind 127.0.0.1 --directory src`, then open `http://127.0.0.1:8000`.
-- Internet access is needed to load CDN dependencies and Python packages. File contents and passwords are processed in the browser; do not add document or password uploads.
-- Runtime dependencies are Pyodide 0.23.4 with its micropip/cryptography packages, pypdf 4.3.1, and PDF.js 3.11.174 with its matching worker. Eruda 3.4.3 loads only when enabled. Styling is local. Inspect the source before changing dependency versions.
-- `package.json` provides development-only formatting tooling; it does not add a build step or browser dependency. Follow [README.md](README.md#development-and-verification) for formatting setup, isolated document-test dependencies and the optional browser suite. Do not run test commands copied from another repository or claim unrun checks passed.
-- For application changes, run relevant Python and browser regressions using synthetic PDFs: correct and incorrect passwords, an unencrypted PDF, malformed input, preview pagination, download, reset and library-load failure as applicable. Verify downloaded PDF contents and encryption state rather than only a success message.
-- Statement methods implement the documented RHB, TNG eWallet and Maybank formats; manual input remains verbatim with the existing blank-password default. Derive passwords only on explicit unlock, without storing/logging or displaying the generated value. Scheme/detail edits must cancel stale operations, and reset clears all method fields back to their HTML defaults, including the prefilled 1 November 1993 statement dates. Run `node --test tests/password-schemes.test.cjs` and real scheme-encrypted browser fixtures when changing these rules.
-- Inspect relevant desktop and mobile screenshots for layout changes. Distinguish browser mobile emulation from physical-device verification.
-- `.github/workflows/deploy.yml` publishes current remote `main` at the site root and each open same-repository pull request beneath `pr-preview/<number>/`. Only regular Git blobs from `src/` are packaged; do not execute pull-request scripts or include tooling/docs in the artifact. Fork previews are excluded. Keep all browser assets reachable beneath the project and preview paths.
-- Main pushes, relevant pull-request events and manual dispatch rebuild all snapshots. Preview comments are created/updated only after successful deployment; closing a pull request removes its preview and updates the existing comment. Preserve the shared `pages` concurrency group and its non-canceling behavior.
-- Run `node --test tests/pages-preview.test.cjs` for packaging/comment changes. Verify current-main production, immutable PR source commits, source boundaries, fork/close handling and comment idempotence. Hosted preview URLs and comments require a successful Actions deployment; do not claim local tests prove deployment.
-- Preserve the MIT license and attribution in `LICENSE`.
+- Serve the application from the repository root: `python3 -m http.server 8000 --bind 127.0.0.1 --directory src`, then open `http://127.0.0.1:8000`.
+- Follow [README.md](README.md#development-and-verification) for formatting setup, isolated test dependencies and browser commands. Do not copy test commands from another repository or claim unrun checks passed.
+- Select tests using [SPEC.md verification coverage](SPEC.md#verification-coverage). For PDF or image changes, verify downloaded contents and metadata independently rather than checking only a success message. Run the statement-password Node and browser cases for password-rule changes, and the Pages suite for packaging/comment changes.
+- Inspect relevant desktop and mobile screenshots for layout changes. Distinguish mobile emulation from physical-device verification and report physical iOS checks separately.
+- For HEIC changes, use the documented `TEST_HEIC` option to verify a real camera photo. Never commit real photos or their derivatives; keep synthetic regression fixtures in `tests/image_fixtures.py`.
+- Inspect source declarations before changing dependencies. Preserve the MIT licence and attribution in `LICENSE` and third-party attribution in `README.md`.
 
 Before reporting completion, review the final diff and ask:
 
@@ -140,7 +111,7 @@ Before reporting completion, review the final diff and ask:
 ### 8. Linting Workflow
 
 - Run formatting, linting, and static analysis after implementation and before reporting completion.
-- `.github/workflows/lint.yml` is the source of truth: pushes to all branches run Prettier 3.8.3 and the Pages/password-method Node tests with Node 24, plus Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
+- `.github/workflows/lint.yml` is the source of truth: pushes to all branches run Prettier 3.8.3 and the Pages, password-method and image-converter Node tests with Node 24, plus Ruff 0.15.9 with Python 3.12. `.prettierrc` defines local formatting defaults; `ruff.toml` uses Ruff's default lint rules plus import sorting and targets Python 3.11 for Pyodide compatibility. The separate deployment workflow is unchanged.
 - Start with changed files for fast feedback, then run the repository-wide formatting check.
 - When editing or creating Markdown files, run the applicable formatting checks.
 
