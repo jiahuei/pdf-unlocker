@@ -120,9 +120,9 @@
               </label>
               <p class="help" id="exifHelp">
                 Off by default. When on, the source EXIF, including any GPS
-                position, is copied into the converted file and its orientation
-                tag is reset, because the pixels are already upright. Leave it
-                off before sharing a photo publicly.
+                position, is copied into the converted file. Its orientation and
+                dimensions are updated to match the upright pixels. Leave it off
+                before sharing a photo publicly.
               </p>
             </div>
             <button class="button primary wide" id="convertBtn" type="submit">
@@ -238,8 +238,8 @@
             <li>
               EXIF, including the GPS position, is dropped unless you select
               <strong>Keep location and shooting details</strong>. Its
-              orientation tag is then reset, because the converted pixels are
-              already upright. XMP is never copied.
+              orientation and dimensions are updated to match the upright
+              pixels. XMP is never copied.
             </li>
             <li>
               Transparent pixels are placed on white for JPEG output. PNG and

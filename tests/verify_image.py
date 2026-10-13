@@ -15,6 +15,7 @@ except ImportError:
 TOLERANCE = 8
 ORIENTATION_TAG = 274
 GPS_IFD = 0x8825
+EXIF_IFD = 0x8769
 # Make, Model, DateTime and Artist: the shooting details the checkbox promises to keep.
 RETAINED_TAGS = (271, 272, 306, 315)
 
@@ -29,6 +30,16 @@ def check_exif(image, exif_from):
         expected = source.getexif()
         for tag in RETAINED_TAGS:
             assert exif.get(tag) == expected.get(tag), f"tag {tag} was not retained"
+        # Stored geometry must describe the exported pixels after orientation is applied.
+        for actual_ifd, expected_ifd, tags in (
+            (exif, expected, (256, 257)),
+            (exif.get_ifd(EXIF_IFD), expected.get_ifd(EXIF_IFD), (40962, 40963)),
+        ):
+            for tag, dimension in zip(tags, image.size, strict=True):
+                if tag in expected_ifd:
+                    assert actual_ifd.get(tag) == dimension, (
+                        f"dimension tag {tag}={actual_ifd.get(tag)} != {dimension}"
+                    )
         assert exif.get_ifd(GPS_IFD) == expected.get_ifd(GPS_IFD), (
             "the GPS position was not retained"
         )

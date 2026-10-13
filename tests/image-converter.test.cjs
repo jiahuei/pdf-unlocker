@@ -12,7 +12,8 @@ const {
   detectFormat,
   embedExif,
   outputName,
-  resetOrientation,
+  exifTiff,
+  normalizeExif,
   sourceExif,
 } = require("../src/image-converter.js");
 const { crc32 } = require("node:zlib");
@@ -106,8 +107,9 @@ const webpFile = webp(webpChunk("VP8 ", [1, 2, 3, 4]));
 test("resets the orientation of retained EXIF", () => {
   for (const littleEndian of [true, false]) {
     const source = tiff(littleEndian, 6);
-    const reset = resetOrientation(Uint8Array.from(source));
+    const reset = normalizeExif(source, 300, 600);
     assert.equal(orientationOf(reset, littleEndian), 1, `${littleEndian}`);
+    assert.equal(orientationOf(source, littleEndian), 6, "source is unchanged");
     // Only the two value bytes change; every other byte is copied through.
     for (const [index, byte] of source.entries())
       if (index < 18 || index > 19)
@@ -119,9 +121,148 @@ test("resets the orientation of retained EXIF", () => {
     [...text("MM"), 0, 42],
   ])
     assert.deepEqual(
-      resetOrientation(Uint8Array.from(partial)),
+      normalizeExif(Uint8Array.from(partial), 300, 600),
       Uint8Array.from(partial),
     );
+});
+
+/** Ensures HEIF follows its declared TIFF offset, including long prefixes and invalid offsets. */
+test("reads EXIF framing without guessing the TIFF location", () => {
+  for (const littleEndian of [true, false]) {
+    const source = tiff(littleEndian, 6);
+    for (const offset of [0, 6, 20, 65536]) {
+      const payload = new Uint8Array(4 + offset + source.length);
+      payload.set(uint32BE(offset));
+      // A header-like sequence in the prefix must not override the declared TIFF location.
+      if (offset >= 4) payload.set(text("II*\0"), 4);
+      payload.set(source, 4 + offset);
+      assert.deepEqual(exifTiff(payload, "heif"), source);
+    }
+    const prefixed = Uint8Array.from([...text("Exif\0\0"), ...source]);
+    assert.deepEqual(exifTiff(prefixed, "jpeg"), source);
+    assert.deepEqual(exifTiff(prefixed, "webp"), source);
+    assert.deepEqual(exifTiff(source, "webp"), source);
+    assert.deepEqual(exifTiff(source, "png"), source);
+    assert.equal(
+      exifTiff(source, "jpeg"),
+      null,
+      "APP1 requires its EXIF identifier",
+    );
+    for (const invalid of [
+      [],
+      [0, 0, 0],
+      [...uint32BE(0xffffffff), ...source],
+      [...uint32BE(source.length), ...source],
+      [...uint32BE(0), ...source.subarray(0, 7)],
+      [...uint32BE(0), ...new Uint8Array(8)],
+    ])
+      assert.equal(exifTiff(Uint8Array.from(invalid), "heif"), null);
+  }
+});
+
+/** Ensures JPEG fill bytes do not hide APP1 EXIF and truncated markers terminate safely. */
+test("reads EXIF after JPEG marker-fill bytes", () => {
+  const source = tiff(true, 6);
+  const jpeg = embedExif("image/jpeg", jpegFile, source, 4, 3);
+  for (const padding of [1, 3]) {
+    const padded = Uint8Array.from([
+      ...jpeg.subarray(0, 2),
+      ...new Array(padding).fill(0xff),
+      ...jpeg.subarray(2),
+    ]);
+    assert.deepEqual(sourceExif(padded, "jpeg"), source);
+  }
+  for (const truncated of [
+    [0xff, 0xd8, 0xff, 0xff, 0xff],
+    [0xff, 0xd8, 0xff, 0xff, 0xe1],
+    [...jpeg.subarray(0, 12 + source.length - 1)],
+  ])
+    assert.equal(sourceExif(Uint8Array.from(truncated), "jpeg"), null);
+});
+
+/** Builds main-image and thumbnail geometry so only the converted image's tags should change. */
+function geometryTiff(little, dimensionType) {
+  const bytes = new Uint8Array(134);
+  const view = new DataView(bytes.buffer);
+  bytes.set(tiff(little, 6).subarray(0, 8));
+  function entry(at, tag, type, value) {
+    view.setUint16(at, tag, little);
+    view.setUint16(at + 2, type, little);
+    view.setUint32(at + 4, 1, little);
+    if (type === 3) view.setUint16(at + 8, value, little);
+    else view.setUint32(at + 8, value, little);
+  }
+  view.setUint16(8, 4, little);
+  entry(10, 0x0100, dimensionType, 600);
+  entry(22, 0x0101, dimensionType, 300);
+  entry(34, 0x0112, 3, 6);
+  entry(46, 0x8769, 4, 62);
+  view.setUint32(58, 92, little);
+  view.setUint16(62, 2, little);
+  entry(64, 0xa002, dimensionType, 600);
+  entry(76, 0xa003, dimensionType, 300);
+  view.setUint16(92, 3, little);
+  entry(94, 0x0100, 3, 60);
+  entry(106, 0x0101, 3, 30);
+  entry(118, 0x0112, 3, 6);
+  return bytes;
+}
+
+/** Ensures upright dimensions replace existing SHORT/LONG tags in both TIFF byte orders. */
+test("normalizes main-image geometry without changing thumbnail metadata", () => {
+  assert.equal(normalizeExif(null, 300, 600), null);
+  for (const little of [true, false]) {
+    for (const type of [3, 4]) {
+      const source = geometryTiff(little, type);
+      const output = normalizeExif(source, 300, 600);
+      const view = new DataView(output.buffer);
+      const get = (at) =>
+        type === 3 ? view.getUint16(at, little) : view.getUint32(at, little);
+      assert.equal(get(18), 300);
+      assert.equal(get(30), 600);
+      assert.equal(get(72), 300);
+      assert.equal(get(84), 600);
+      assert.equal(view.getUint16(42, little), 1);
+      assert.deepEqual(
+        output.subarray(92),
+        source.subarray(92),
+        "thumbnail is unchanged",
+      );
+      assert.deepEqual(
+        source,
+        geometryTiff(little, type),
+        "source is unchanged",
+      );
+    }
+    const promoted = normalizeExif(geometryTiff(little, 3), 70000, 300);
+    const view = new DataView(promoted.buffer);
+    for (const entry of [10, 64]) {
+      assert.equal(view.getUint16(entry + 2, little), 4);
+      assert.equal(view.getUint32(entry + 8, little), 70000);
+    }
+  }
+});
+
+/** Ensures truncated, cyclic or invalid IFD references cannot cause out-of-bounds writes. */
+test("handles incomplete EXIF geometry without corrupting unrelated bytes", () => {
+  for (const little of [true, false]) {
+    for (const pointer of [0, 4, 8, 133, 0xffffffff]) {
+      const source = geometryTiff(little, 4);
+      new DataView(source.buffer).setUint32(54, pointer, little);
+      const output = normalizeExif(source, 300, 600);
+      assert.deepEqual(output.subarray(62), source.subarray(62));
+    }
+    const source = geometryTiff(little, 3);
+    const view = new DataView(source.buffer);
+    view.setUint16(12, 2, little); // Invalid dimension type (ASCII).
+    view.setUint32(26, 2, little); // Multiple values, rather than one inline dimension.
+    const output = normalizeExif(source, 300, 600);
+    assert.deepEqual(output.subarray(10, 34), source.subarray(10, 34));
+    for (const length of [8, 9, 21, 65, 87])
+      assert.doesNotThrow(() =>
+        normalizeExif(source.subarray(0, length), 300, 600),
+      );
+  }
 });
 
 /** Ensures the transplant is readable from each container and leaves the image data intact. */

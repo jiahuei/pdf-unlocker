@@ -466,7 +466,7 @@ async function verifyPreviewPrefix(browser, open) {
       "--pixel",
       "260,50,0,255,0",
     );
-    /** Ensures the retained EXIF keeps the position and stays upright in every output. */
+    /** Ensures retained EXIF keeps GPS and matches upright pixel dimensions in every output. */
     for (const format of ["jpeg", "png", "webp"])
       verify(
         await convertAndDownload(page, "gps.jpg", { format, keepExif: true }),
@@ -491,6 +491,21 @@ async function verifyPreviewPrefix(browser, open) {
         "--exif-from",
         path.join(fixtures, "gps.heic"),
       );
+    /** Ensures valid JPEG marker fill and a declared HEIF TIFF offset preserve EXIF. */
+    for (const fixture of [
+      "gps-marker-fill.jpg",
+      ...(heicFixtures ? ["gps-offset.heic"] : []),
+    ])
+      for (const format of ["jpeg", "png", "webp"])
+        verify(
+          await convertAndDownload(page, fixture, { format, keepExif: true }),
+          "--format",
+          { jpeg: "JPEG", png: "PNG", webp: "WEBP" }[format],
+          "--size",
+          fixture.endsWith(".heic") ? "640x400" : "300x600",
+          "--exif-from",
+          path.join(fixtures, fixture),
+        );
     // A source without EXIF says so instead of quietly claiming to have kept it.
     await convertAndDownload(page, "photo.png", { keepExif: true });
     check(

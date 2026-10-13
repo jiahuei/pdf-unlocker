@@ -4,7 +4,6 @@ const ImageConverter = (() => {
   const MAX_FILE_MB = 40;
   const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
   const MAX_PIXELS = 50 * 1000 * 1000;
-  const ORIENTATION_TAG = 0x0112;
   const TIFF_LITTLE = [0x49, 0x49, 0x2a, 0x00]; // "II" with a 42 magic number
   const TIFF_BIG = [0x4d, 0x4d, 0x00, 0x2a]; // "MM" with the same magic number
   // A JPEG application segment carries a 16-bit length that includes its own two bytes.
@@ -174,44 +173,59 @@ const ImageConverter = (() => {
     return `${dot > 0 ? name.slice(0, dot) : name || "image"}${extension}`;
   }
 
-  /**
-   * Locates the TIFF header inside a metadata payload. HEIC prefixes it with a four-byte offset,
-   * JPEG with "Exif\0\0", while PNG and WebP store it directly.
-   */
-  function tiffStart(payload) {
-    for (let offset = 0; offset + 4 <= payload.length && offset <= 12; offset++)
-      if (
+  /** Reads each container's EXIF framing before validating the TIFF header. */
+  function exifTiff(payload, format) {
+    let offset = 0;
+    if (format === "heif") {
+      if (payload.length < 4) return null;
+      // HEIF offsets are relative to the end of this four-byte field, with no fixed prefix limit.
+      offset = 4 + uint32(payload, 0);
+    } else if (
+      format === "jpeg" ||
+      (format === "webp" && text(payload, 0, 6) === "Exif\0\0")
+    ) {
+      if (text(payload, 0, 6) !== "Exif\0\0") return null;
+      offset = 6;
+    }
+    if (
+      offset + 8 > payload.length ||
+      !(
         matches(payload, offset, TIFF_LITTLE) ||
         matches(payload, offset, TIFF_BIG)
       )
-        return offset;
-    return -1;
+    )
+      return null;
+    return payload.subarray(offset);
   }
 
   function exifFromJpeg(bytes) {
     for (let offset = 2; offset + 4 <= bytes.length; ) {
       if (bytes[offset] !== 0xff) return null;
+      // JPEG permits repeated 0xff fill bytes before a marker code.
+      while (bytes[offset + 1] === 0xff) offset++;
+      if (offset + 4 > bytes.length) return null;
       const marker = bytes[offset + 1];
       // Scan and end-of-image markers mean no application segment follows.
       if (marker === 0xda || marker === 0xd9) return null;
       const length = uint16(bytes, offset + 2);
-      if (length < 2) return null;
+      if (length < 2 || offset + 2 + length > bytes.length) return null;
       if (marker === 0xe1) {
         const payload = bytes.subarray(offset + 4, offset + 2 + length);
-        const start = tiffStart(payload);
-        if (start >= 0) return payload.subarray(start);
+        const tiff = exifTiff(payload, "jpeg");
+        if (tiff) return tiff;
       }
       offset += 2 + length;
     }
     return null;
   }
 
-  function chunkExif(bytes, chunks, type) {
+  function chunkExif(bytes, format) {
+    const chunks = format === "png" ? pngChunks(bytes) : webpChunks(bytes);
+    const type = format === "png" ? "eXIf" : "EXIF";
     for (const chunk of chunks)
       if (chunk.type === type) {
         const payload = bytes.subarray(chunk.start, chunk.start + chunk.length);
-        const start = tiffStart(payload);
-        return start < 0 ? null : payload.subarray(start);
+        return exifTiff(payload, format);
       }
     return null;
   }
@@ -219,34 +233,51 @@ const ImageConverter = (() => {
   /** Returns the EXIF stored inline by JPEG, PNG and WebP; HEIF exposes it through its decoder. */
   function sourceExif(bytes, format) {
     if (format === "jpeg") return exifFromJpeg(bytes);
-    if (format === "png") return chunkExif(bytes, pngChunks(bytes), "eXIf");
-    if (format === "webp") return chunkExif(bytes, webpChunks(bytes), "EXIF");
+    if (format === "png" || format === "webp") return chunkExif(bytes, format);
     return null;
   }
 
   /**
-   * Resets the EXIF orientation to upright. The converted pixels are already rotated, so keeping
-   * the source value would make viewers rotate the output a second time.
+   * Copies EXIF and updates existing geometry tags to describe the already upright output.
+   * Only IFD0 and its Exif IFD describe the main image; thumbnail IFDs keep their own geometry.
    */
-  function resetOrientation(tiff) {
+  function normalizeExif(source, width, height) {
+    if (!source) return null;
+    const tiff = Uint8Array.from(source);
+    if (tiff.length < 8) return tiff;
     const little = tiff[0] === 0x49;
-    const ifd = uint32(tiff, 4, little);
-    const entries = ifd + 2 <= tiff.length ? uint16(tiff, ifd, little) : 0;
-    for (let index = 0; index < entries; index++) {
-      const entry = ifd + 2 + index * 12;
-      if (entry + 12 > tiff.length) break;
-      if (uint16(tiff, entry, little) !== ORIENTATION_TAG) continue;
-      // A SHORT value occupies the first two bytes of the entry's value field.
-      tiff[entry + 8] = little ? 1 : 0;
-      tiff[entry + 9] = little ? 0 : 1;
-      break;
+    const view = new DataView(tiff.buffer);
+    function updateIfd(ifd, values) {
+      if (ifd < 8 || ifd + 2 > tiff.length) return 0;
+      const entries = uint16(tiff, ifd, little);
+      let exifIfd = 0;
+      for (let index = 0; index < entries; index++) {
+        const entry = ifd + 2 + index * 12;
+        if (entry + 12 > tiff.length) break;
+        const tag = uint16(tiff, entry, little);
+        let type = uint16(tiff, entry + 2, little);
+        if (uint32(tiff, entry + 4, little) !== 1) continue;
+        if (tag === 0x8769 && type === 4)
+          exifIfd = uint32(tiff, entry + 8, little);
+        const value = values[tag];
+        if (value === undefined || (type !== 3 && type !== 4)) continue;
+        // A rotated LONG dimension can become the value of a formerly SHORT dimension.
+        if (type === 3 && value > 0xffff) {
+          type = 4;
+          view.setUint16(entry + 2, type, little);
+        }
+        if (type === 3) view.setUint16(entry + 8, value, little);
+        else view.setUint32(entry + 8, value, little);
+      }
+      return exifIfd;
     }
+    const exifIfd = updateIfd(uint32(tiff, 4, little), {
+      0x0100: width,
+      0x0101: height,
+      0x0112: 1,
+    });
+    updateIfd(exifIfd, { 0xa002: width, 0xa003: height });
     return tiff;
-  }
-
-  /** Returns an owned, upright copy of the source EXIF, or null when there is none. */
-  function normalizeExif(tiff) {
-    return tiff ? resetOrientation(Uint8Array.from(tiff)) : null;
   }
 
   /**
@@ -323,7 +354,9 @@ const ImageConverter = (() => {
       bitmap,
       width: bitmap.width,
       height: bitmap.height,
-      exif: keepExif ? normalizeExif(sourceExif(bytes, format)) : null,
+      exif: keepExif
+        ? normalizeExif(sourceExif(bytes, format), bitmap.width, bitmap.height)
+        : null,
     };
   }
 
@@ -369,8 +402,7 @@ const ImageConverter = (() => {
           heif._heif_image_handle_get_metadata(error, handle, id, data);
           if (heif.HEAP32[error >> 2]) return null;
           const payload = heif.HEAPU8.slice(data, data + size);
-          const start = tiffStart(payload);
-          return start < 0 ? null : payload.subarray(start);
+          return exifTiff(payload, "heif");
         } finally {
           heif._free(data);
         }
@@ -453,7 +485,9 @@ const ImageConverter = (() => {
         bitmap,
         width,
         height,
-        exif: keepExif ? normalizeExif(heifExif(heif, image)) : null,
+        exif: keepExif
+          ? normalizeExif(heifExif(heif, image), width, height)
+          : null,
       };
     } finally {
       image.free();
@@ -767,8 +801,9 @@ const ImageConverter = (() => {
     detectFormat,
     embedExif,
     encoderSupport,
+    exifTiff,
+    normalizeExif,
     outputName,
-    resetOrientation,
     sourceExif,
   };
 })();

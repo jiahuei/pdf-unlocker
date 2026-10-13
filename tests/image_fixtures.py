@@ -10,6 +10,7 @@ from PIL.TiffImagePlugin import IFDRational
 ORIENTATION_TAG = 274
 ROTATE_90_CW = 6
 GPS_IFD = 0x8825
+EXIF_IFD = 0x8769
 # An obviously synthetic position, one arc-second off Null Island, so no real place is recorded.
 SYNTHETIC_GPS = {
     1: "N",
@@ -21,7 +22,7 @@ SYNTHETIC_GPS = {
 }
 
 
-def gps_exif(orientation=None):
+def gps_exif(orientation=None, size=None):
     """Return EXIF bytes carrying shooting details and a synthetic GPS position."""
     exif = Image.Exif()
     exif[271] = "Synthetic"
@@ -29,6 +30,9 @@ def gps_exif(orientation=None):
     exif[GPS_IFD] = SYNTHETIC_GPS
     if orientation:
         exif[ORIENTATION_TAG] = orientation
+    if size:
+        exif[256], exif[257] = size
+        exif[EXIF_IFD] = {40962: size[0], 40963: size[1]}
     return exif.tobytes()
 
 
@@ -64,10 +68,20 @@ def write_heif_fixtures(directory):
     gradient((640, 400), (255, 0, 0)).save(directory / "photo.heic", quality=90)
     # A camera photo carries its EXIF in a separate HEIF item, which only the decoder can read.
     gradient((640, 400), (255, 0, 0)).save(
-        directory / "gps.heic", quality=90, exif=gps_exif()
+        directory / "gps.heic", quality=90, exif=gps_exif(size=(640, 400))
     )
     with Image.open(directory / "gps.heic") as tagged:
         assert tagged.getexif().get_ifd(GPS_IFD), "the HEIC fixture must carry GPS"
+    # HEIF declares the TIFF position after its four-byte prefix; it need not start nearby.
+    tiff = gps_exif(size=(640, 400))[6:]
+    payload = (20).to_bytes(4, "big") + bytes(20) + tiff
+    gradient((640, 400), (255, 0, 0)).save(
+        directory / "gps-offset.heic",
+        quality=90,
+        metadata=[{"type": "Exif", "content_type": "", "data": payload}],
+    )
+    with Image.open(directory / "gps-offset.heic") as tagged:
+        assert tagged.getexif().get_ifd(GPS_IFD), "the offset HEIC must carry GPS"
     gradient((640, 400), (255, 0, 0)).save(
         directory / "untagged.heic", quality=90, save_nclx_profile=False
     )
@@ -163,10 +177,19 @@ def write_fixtures(directory):
 
     # Rotation plus a position: the output must stay upright while the GPS block survives.
     gradient((600, 300), (0, 255, 0)).save(
-        directory / "gps.jpg", quality=90, exif=gps_exif(ROTATE_90_CW)
+        directory / "gps.jpg", quality=90, exif=gps_exif(ROTATE_90_CW, (600, 300))
     )
     with Image.open(directory / "gps.jpg") as tagged:
         assert tagged.getexif().get_ifd(GPS_IFD), "the JPEG fixture must carry GPS"
+
+    # Valid JPEG marker fill before APP1 must not hide EXIF from the metadata scanner.
+    padded = bytearray((directory / "gps.jpg").read_bytes())
+    app1 = padded.index(b"Exif\0\0") - 4
+    assert padded[app1 : app1 + 2] == b"\xff\xe1"
+    padded[app1:app1] = b"\xff"
+    (directory / "gps-marker-fill.jpg").write_bytes(padded)
+    with Image.open(directory / "gps-marker-fill.jpg") as tagged:
+        assert tagged.getexif().get_ifd(GPS_IFD), "marker fill must leave EXIF readable"
 
     frames = [
         Image.new("RGB", (80, 60), colour) for colour in ((255, 0, 0), (0, 255, 0))
