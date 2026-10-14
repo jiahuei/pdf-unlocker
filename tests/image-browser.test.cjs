@@ -56,6 +56,27 @@ function watch(context) {
     return page;
   };
 }
+/** Waits until every thumbnail of a gallery has decoded, scrolling it into view for lazy images. */
+function waitThumbnails(page, list) {
+  return (
+    page
+      .locator(`${list} .tile`)
+      .last()
+      .scrollIntoViewIfNeeded()
+      .then(() =>
+        page.waitForFunction(
+          (selector) =>
+            [...document.querySelectorAll(`${selector} .tile-frame img`)].every(
+              (image) => image.complete,
+            ),
+          list,
+          { timeout: 30000 },
+        ),
+      )
+      // An empty gallery has no tiles to scroll to, and nothing to wait for either.
+      .catch(() => {})
+  );
+}
 /** Waits for the running batch to settle: every tile reached a final status and the form is idle. */
 async function waitBatch(page, timeout = 120000) {
   await page.waitForFunction(
@@ -70,6 +91,7 @@ async function waitBatch(page, timeout = 120000) {
     null,
     { timeout },
   );
+  await waitThumbnails(page, "#resultList");
 }
 /** Reads every result tile's name, status, detail line, thumbnail state and download name. */
 function tileStates(page) {
@@ -97,25 +119,12 @@ function sourceStates(page) {
     })),
   );
 }
-/** Waits until every input thumbnail the browser can render has decoded. */
-function waitThumbnails(page) {
-  return page
-    .waitForFunction(
-      () =>
-        [...document.querySelectorAll("#sourceList .tile-frame img")].every(
-          (image) => image.complete,
-        ),
-      null,
-      { timeout: 30000 },
-    )
-    .catch(() => {});
-}
 /** Chooses a batch of fixtures, applies the shared settings and waits for the conversion. */
 async function convertBatch(page, fixtureNames, options = {}) {
   await page
     .locator("#imageFile")
     .setInputFiles(fixtureNames.map((name) => path.join(fixtures, name)));
-  await waitThumbnails(page);
+  await waitThumbnails(page, "#sourceList");
   if (options.format)
     await page.locator("#outputFormat").selectOption(options.format);
   if (options.keepExif !== undefined)
@@ -1032,6 +1041,7 @@ async function verifyPreviewPrefix(browser, open) {
 
     // Drag-and-drop accepts the same batch as the picker, in drop order.
     await dropFiles(page, ["photo.png", "alpha.png"]);
+    await waitThumbnails(page, "#sourceList");
     const dropped = await tileStates(page);
     check(
       dropped.map((tile) => tile.name).join() === "photo.png,alpha.png" &&
@@ -1349,7 +1359,7 @@ async function verifyPreviewPrefix(browser, open) {
             path.join(fixtures, name),
           ),
         );
-      await waitThumbnails(heicPage);
+      await waitThumbnails(heicPage, "#sourceList");
       check(
         (await sourceStates(heicPage)).every(
           (tile) => !tile.thumbnail && !tile.meta.includes("px"),
@@ -1438,7 +1448,7 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "photo.jpg"),
       ]);
     await noOverflow(mobilePage, 375);
-    await waitThumbnails(mobilePage);
+    await waitThumbnails(mobilePage, "#sourceList");
     check(
       (await mobilePage.locator("#convertLabel").textContent()) ===
         "Convert 3 images" &&
