@@ -169,6 +169,39 @@ async function verifyInputDownload(page, index, fixture, name = fixture) {
     `input ${name} retains its exact bytes and metadata`,
   );
 }
+/** Ensures compact icons keep distinct accessible names, tooltips and usable touch targets. */
+async function checkDownloadIcons(page) {
+  const links = await page
+    .locator(".tile-button:visible")
+    .evaluateAll((links) =>
+      links.map((link) => ({
+        label: link.getAttribute("aria-label"),
+        expected: `Download ${link.closest("#sourceList") ? "input" : "converted"} ${link.download}`,
+        title: link.title,
+        text: link.textContent.trim(),
+        decorativeIcon: link.querySelector('svg[aria-hidden="true"]') !== null,
+        width: link.getBoundingClientRect().width,
+        height: link.getBoundingClientRect().height,
+      })),
+    );
+  check(
+    links.length === 6 &&
+      links.every(
+        (link) => link.label === link.expected && link.title === link.expected,
+      ),
+    "all input and converted download icons have filename-specific labels and tooltips",
+  );
+  check(
+    links.every(
+      (link) =>
+        link.text === "" &&
+        link.decorativeIcon &&
+        link.width === 40 &&
+        link.height === 40,
+    ),
+    "download links show only a decorative icon within a compact 40px touch target",
+  );
+}
 /** Converts one fixture as a single-file batch and returns the downloaded file path. */
 async function convertAndDownload(page, fixture, options = {}) {
   const format = options.format || "jpeg";
@@ -981,6 +1014,7 @@ async function verifyPreviewPrefix(browser, open) {
       "photo.webp",
     ].entries())
       await verifyInputDownload(page, index, fixture);
+    await checkDownloadIcons(page);
     if (screenshotDir) {
       await page.screenshot({
         path: path.join(screenshotDir, "image-input-downloads-1440.png"),
@@ -1621,6 +1655,7 @@ async function verifyPreviewPrefix(browser, open) {
           .isVisible()),
       "every result keeps its thumbnail and download control on a narrow screen",
     );
+    await checkDownloadIcons(mobilePage);
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await mobilePage.screenshot({

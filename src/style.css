@@ -754,19 +754,11 @@ code {
   margin: 2px 0 0;
 }
 .tile-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* Matches the 40px touch target the PDF tool's icon buttons already use. */
-  min-height: 40px;
-  margin: 0 10px 10px;
-  padding: 6px 10px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--accent);
-  color: white;
-  font-size: 0.72rem;
-  font-weight: 650;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  margin: auto 10px 10px auto;
+  padding: 0;
   text-decoration: none;
 }
 .tile-button:hover {

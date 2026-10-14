@@ -117,6 +117,15 @@ function tileShell(entry, previewable, onLoad) {
   tile.append(frame, caption);
   return { tile, frame, image, name, meta };
 }
+/** Shares the download glyph while each gallery supplies its own filename and accessible label. */
+function downloadLink(className) {
+  const link = document.createElement("a");
+  link.className = `icon-button tile-button ${className}`;
+  link.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+    aria-hidden="true" focusable="false"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg>`;
+  return link;
+}
 function sourceTile(entry) {
   const parts = tileShell(entry, false, (image) => {
     // Chromium reports oriented geometry for JPEG and PNG but ignores WebP EXIF orientation and
@@ -126,20 +135,17 @@ function sourceTile(entry) {
     entry.height = image.naturalHeight;
     updateEntry(entry);
   });
-  const download = document.createElement("a");
-  download.className = "tile-button tile-source-download";
-  download.textContent = "Download input";
+  const download = downloadLink("tile-source-download");
   download.href = entry.sourceUrl;
   download.download = entry.file.name;
-  download.setAttribute("aria-label", `Download input ${entry.file.name}`);
+  download.title = `Download input ${entry.file.name}`;
+  download.setAttribute("aria-label", download.title);
   parts.tile.append(download);
   return parts;
 }
 function resultTile(entry) {
   const parts = tileShell(entry, true);
-  const download = document.createElement("a");
-  download.className = "tile-button tile-download";
-  download.textContent = "Download";
+  const download = downloadLink("tile-download");
   parts.tile.append(download);
   parts.download = download;
   return parts;
@@ -180,6 +186,8 @@ function updateEntry(entry) {
   tile.frame.setAttribute("aria-label", `Preview ${result.name}`);
   tile.download.href = result.url;
   tile.download.download = result.name;
+  tile.download.title = `Download converted ${result.name}`;
+  tile.download.setAttribute("aria-label", tile.download.title);
 }
 function createTiles(entry) {
   entry.sourceTile = sourceTile(entry);
