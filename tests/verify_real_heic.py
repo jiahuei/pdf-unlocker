@@ -1,13 +1,14 @@
-"""Independently verify a conversion of a real camera photo supplied outside the repository."""
+"""Independently verify a conversion of the approved fixture or an external camera photo."""
 
 import argparse
 import io
+import json
 from pathlib import Path
 
 import pillow_heif
 from PIL import Image, ImageCms
 
-from verify_image import check_exif
+from verify_image import GPS_IFD, check_exif
 
 # HEVC decoding plus a lossy JPEG re-encode; compared after downscaling to a coarse grid.
 TOLERANCE = 8
@@ -39,11 +40,16 @@ def verify_real_heic(source, output, keep_exif=False):
     """Assert geometry, orientation, metadata policy and colour fidelity of a download."""
     handle = pillow_heif.open_heif(Path(source))
     reference, profile = reference_pixels(handle)
+    with Image.open(Path(source)) as original:
+        source_exif = original.getexif()
+        source_has_exif = bool(source_exif)
+        source_has_gps = bool(source_exif.get_ifd(GPS_IFD))
     with Image.open(Path(output)) as converted:
         assert converted.format == "JPEG", f"{converted.format} != JPEG"
         # libheif applies the container rotation, so equal sizes prove the orientation survived.
         assert converted.size == reference.size, f"{converted.size} != {reference.size}"
-        check_exif(converted, source if keep_exif else None)
+        # A source with no EXIF must not gain it, even when retention is requested.
+        check_exif(converted, source if keep_exif and source_has_exif else None)
         left = reference.resize((GRID, GRID))
         right = converted.convert("RGB").resize((GRID, GRID))
         differences = [
@@ -52,23 +58,32 @@ def verify_real_heic(source, output, keep_exif=False):
         ]
     worst = max(differences)
     assert worst <= TOLERANCE, f"colour difference {worst} exceeds {TOLERANCE}"
-    print(
-        f"verified {Path(output).name}: {reference.size[0]}x{reference.size[1]}, "
-        f"profile {profile or 'untagged'}, worst channel difference {worst}, "
-        f"mean {sum(differences) / len(differences):.2f}"
-    )
+    return {
+        "output": Path(output).name,
+        "size": reference.size,
+        "profile": profile,
+        "worst_channel_difference": worst,
+        "mean_channel_difference": sum(differences) / len(differences),
+        "source_has_exif": source_has_exif,
+        "source_has_gps": source_has_gps,
+        "exif": "kept" if keep_exif and source_has_exif else "absent",
+    }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "source", help="the real HEIC photo, kept outside the repository"
+        "source", help="the approved HEIC fixture or an external camera photo"
     )
     parser.add_argument("output", help="the JPEG downloaded from the converter")
     parser.add_argument(
         "--keep-exif",
         action="store_true",
-        help="expect the source EXIF, including GPS, to be retained upright",
+        help="retain source EXIF upright when present; otherwise require no output EXIF",
     )
     arguments = parser.parse_args()
-    verify_real_heic(arguments.source, arguments.output, arguments.keep_exif)
+    print(
+        json.dumps(
+            verify_real_heic(arguments.source, arguments.output, arguments.keep_exif)
+        )
+    )

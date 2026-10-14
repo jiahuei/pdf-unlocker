@@ -117,15 +117,6 @@ function tileShell(entry, previewable, onLoad) {
   tile.append(frame, caption);
   return { tile, frame, image, name, meta };
 }
-/** Shares the download glyph while each gallery supplies its own filename and accessible label. */
-function downloadLink(className) {
-  const link = document.createElement("a");
-  link.className = `icon-button tile-button ${className}`;
-  link.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-    aria-hidden="true" focusable="false"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg>`;
-  return link;
-}
 function sourceTile(entry) {
   const parts = tileShell(entry, false, (image) => {
     // Chromium reports oriented geometry for JPEG and PNG but ignores WebP EXIF orientation and
@@ -135,7 +126,9 @@ function sourceTile(entry) {
     entry.height = image.naturalHeight;
     updateEntry(entry);
   });
-  const download = downloadLink("tile-source-download");
+  const download = document.createElement("a");
+  download.className = "tile-button tile-source-download";
+  download.textContent = "Download input";
   download.href = entry.sourceUrl;
   download.download = entry.file.name;
   download.title = `Download input ${entry.file.name}`;
@@ -145,7 +138,9 @@ function sourceTile(entry) {
 }
 function resultTile(entry) {
   const parts = tileShell(entry, true);
-  const download = downloadLink("tile-download");
+  const download = document.createElement("a");
+  download.className = "tile-button tile-download";
+  download.textContent = "Download result";
   parts.tile.append(download);
   parts.download = download;
   return parts;
@@ -176,6 +171,8 @@ function updateEntry(entry) {
     tile.frame.removeAttribute("aria-label");
     tile.download.removeAttribute("href");
     tile.download.removeAttribute("download");
+    tile.download.removeAttribute("title");
+    tile.download.removeAttribute("aria-label");
     return;
   }
   // Compared first: reassigning the same blob URL would decode the thumbnail again.
@@ -186,7 +183,7 @@ function updateEntry(entry) {
   tile.frame.setAttribute("aria-label", `Preview ${result.name}`);
   tile.download.href = result.url;
   tile.download.download = result.name;
-  tile.download.title = `Download converted ${result.name}`;
+  tile.download.title = `Download result ${result.name}`;
   tile.download.setAttribute("aria-label", tile.download.title);
 }
 function createTiles(entry) {
@@ -301,7 +298,7 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
         onStage: (stage) => {
           if (token === operation && stage === "codec")
             showMessage(
-              "Loading the HEIC decoder. This one-off download happens in your browser.",
+              "Loading the HEIC decoder from this site for this page session.",
             );
         },
       });

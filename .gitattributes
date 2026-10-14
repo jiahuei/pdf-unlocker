@@ -67,3 +67,7 @@
 
 # Preserve third-party licence notices verbatim, including upstream whitespace.
 src/vendor/**/LICENSE-*.txt -whitespace
+
+# Keep generated decoder bytes intact and out of text diffs/language statistics.
+src/vendor/** linguist-vendored
+src/vendor/**/libheif-bundle.js -text -diff

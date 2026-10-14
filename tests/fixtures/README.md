@@ -19,8 +19,8 @@ profile fails explicitly instead of silently exporting the original gray value.
 
 ## Real HEIC regression
 
-`IMG_0308.heic` is the original user-supplied photograph, included with the repository owner's explicit permission as a test fixture. It contains a 1576-by-2100 Display P3 image with 10-bit 4:4:4 HEVC tiles that reproduced magenta/green corruption in libde265 1.0.15. The original bytes and metadata are preserved so the decoder regression remains reproducible. The CC0 licence above applies only to the ICC profile, not this photograph.
+`IMG_0308.heic` is the original user-supplied photograph, included with the repository owner's explicit permission as a test fixture. It contains a 1576-by-2100 Display P3 image with 10-bit 4:4:4 HEVC tiles that reproduced magenta/green corruption in libde265 1.0.15. The original bytes are preserved so the decoder regression remains reproducible. This supplied file contains no EXIF or GPS metadata. The CC0 licence above applies only to the ICC profile, not this photograph.
 
-The image browser suite converts this fixture with EXIF off and on by default when `pillow-heif` is installed. `verify_real_heic.py` independently decodes it and checks colour, geometry and metadata; no converted derivative is stored in Git. `TEST_HEIC` can override this case with another external photo. Other personal photos still require explicit permission before inclusion.
+The image browser suite converts this fixture with EXIF off and on by default when `pillow-heif` is installed. `verify_real_heic.py` independently decodes it and checks colour, geometry and the absence of output EXIF in both modes; retention-on also requires the UI to report `no EXIF in the source`. Synthetic GPS-tagged fixtures exercise retained metadata, and an external `TEST_HEIC` photo carrying EXIF can cover real-photo retention. No converted derivative is stored in Git. Other personal photos still require explicit permission before inclusion.
 
 SHA-256: `6b30d4b7036dc4a8659c0270ab266615916f9c0980f52ed91517e7986f476070`.

@@ -9,20 +9,18 @@ const ImageConverter = (() => {
   // A JPEG application segment carries a 16-bit length that includes its own two bytes.
   const MAX_JPEG_EXIF = 0xffff - 2 - 6;
   const HEIF_SCRIPT_URL = "vendor/libheif-1.23.6/libheif-bundle.js";
-  // Every brand a HEIC photo can carry, including collections with several images.
-  // AVIF is deliberately absent: its AV1 codec is not in the decoder bundle this site loads.
-  const HEIF_BRANDS = new Set([
-    "heic",
-    "heix",
+  // Still images and collections are distinct from timed image sequences.
+  const HEIF_BRANDS = new Set(["heic", "heix", "mif1", "heif"]);
+  // Reject timed sequences and the layered still variants heim/heis under the same input policy.
+  // MP4RA registers heim/heis as collections, so they are not labelled sequence brands here.
+  const HEIF_REJECTED_BRANDS = new Set([
     "heim",
     "heis",
-    "hevm",
-    "hevs",
     "hevc",
     "hevx",
-    "mif1",
+    "hevm",
+    "hevs",
     "msf1",
-    "heif",
   ]);
   const OUTPUTS = [
     {
@@ -107,6 +105,17 @@ const ImageConverter = (() => {
     return (crc ^ 0xffffffff) >>> 0;
   }
 
+  /** Reads major and compatible brands without treating the minor version or later boxes as brands. */
+  function fileTypeBrands(bytes) {
+    if (text(bytes, 4, 4) !== "ftyp") return [];
+    const length = uint32(bytes, 0);
+    if (length < 16 || length > bytes.length) return [];
+    const brands = [text(bytes, 8, 4)];
+    for (let offset = 16; offset + 4 <= length; offset += 4)
+      brands.push(text(bytes, offset, 4));
+    return brands;
+  }
+
   /** Returns jpeg, png, webp or heif from the file's own signature, or null when unrecognised. */
   function detectFormat(bytes) {
     if (matches(bytes, 0, [0xff, 0xd8, 0xff])) return "jpeg";
@@ -114,7 +123,14 @@ const ImageConverter = (() => {
       return "png";
     if (text(bytes, 0, 4) === "RIFF" && text(bytes, 8, 4) === "WEBP")
       return "webp";
-    if (text(bytes, 4, 4) === "ftyp" && HEIF_BRANDS.has(text(bytes, 8, 4)))
+    const brands = fileTypeBrands(bytes);
+    // AVIF also carries generic HEIF brands, but its AV1 codec is not in our decoder bundle.
+    if (brands.includes("avif") || brands.includes("avis")) return null;
+    if (
+      brands.some(
+        (brand) => HEIF_BRANDS.has(brand) || HEIF_REJECTED_BRANDS.has(brand),
+      )
+    )
       return "heif";
     return null;
   }
@@ -156,12 +172,17 @@ const ImageConverter = (() => {
   }
 
   /**
-   * Reports animated inputs, which would otherwise be reduced to one frame without telling the
-   * user. HEIF collections report their image count after decoding.
+   * Reports animation and unsupported layered HEIF variants before decoding. Supported still
+   * HEIF collections report their image count after decoding.
    */
   function animatedFormat(bytes, format) {
     if (format === "png" && pngAnimated(bytes)) return "png";
     if (format === "webp" && webpAnimated(bytes)) return "webp";
+    if (
+      format === "heif" &&
+      fileTypeBrands(bytes).some((brand) => HEIF_REJECTED_BRANDS.has(brand))
+    )
+      return "heif";
     return null;
   }
 

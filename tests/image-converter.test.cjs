@@ -9,6 +9,7 @@ const {
   MAX_PIXELS,
   OUTPUTS,
   animatedFormat,
+  convert,
   detectFormat,
   embedExif,
   outputName,
@@ -49,8 +50,14 @@ const webp = (...chunks) =>
     ...text("WEBP"),
     ...chunks.flat(),
   ]);
-const heif = (brand) =>
-  Uint8Array.from([...uint32BE(24), ...text("ftyp"), ...text(brand)]);
+const heif = (brand, ...compatible) =>
+  Uint8Array.from([
+    ...uint32BE(16 + 4 * compatible.length),
+    ...text("ftyp"),
+    ...text(brand),
+    ...uint32BE(0),
+    ...text(compatible.join("")),
+  ]);
 const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]);
 const ihdr = pngChunk("IHDR", new Array(13).fill(0));
 const vp8x = webpChunk("VP8X", [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -427,7 +434,9 @@ test("detects the supported formats from file signatures", () => {
 /** Ensures formats outside the published matrix, including AVIF and plain text, are refused. */
 test("refuses formats outside the matrix", () => {
   for (const bytes of [
-    heif("avif"),
+    heif("avif", "mif1"),
+    heif("avis", "msf1"),
+    heif("mif1", "avif"),
     heif("qt  "),
     Uint8Array.from(text("GIF89a....")),
     Uint8Array.from(text("%PDF-1.7\n")),
@@ -436,6 +445,64 @@ test("refuses formats outside the matrix", () => {
     new Uint8Array(0),
   ])
     assert.equal(detectFormat(bytes), null, String(bytes));
+});
+
+/** Ensures HEIF sequences and unsupported layered variants are rejected before invoking the decoder. */
+test("rejects major and compatible unsupported HEIF brands before decoding", async () => {
+  for (const brand of [
+    "heim",
+    "heis",
+    "hevc",
+    "hevx",
+    "hevm",
+    "hevs",
+    "msf1",
+  ]) {
+    for (const bytes of [
+      heif(brand),
+      heif("heic", brand),
+      heif("isom", brand),
+    ]) {
+      assert.equal(detectFormat(bytes), "heif", brand);
+      assert.equal(animatedFormat(bytes, "heif"), "heif", brand);
+      let codecRequested = false;
+      await assert.rejects(
+        convert(new Blob([bytes]), OUTPUTS[0], 0.8, {
+          onStage() {
+            codecRequested = true;
+          },
+        }),
+        {
+          code: "animated",
+          message:
+            "Animated images are not supported. Choose a single still image.",
+        },
+      );
+      assert.equal(
+        codecRequested,
+        false,
+        "sequence rejection must not load the decoder",
+      );
+    }
+  }
+});
+
+/** Ensures compatible still brands remain supported and non-brand bytes cannot imply animation. */
+test("distinguishes still HEIF collections from sequences within the ftyp box", () => {
+  for (const brand of ["heic", "heix", "mif1", "heif"]) {
+    for (const bytes of [heif(brand), heif("isom", brand)]) {
+      assert.equal(detectFormat(bytes), "heif", brand);
+      assert.equal(animatedFormat(bytes, "heif"), null, brand);
+    }
+  }
+  const minorVersion = heif("heic");
+  minorVersion.set(text("msf1"), 12);
+  assert.equal(animatedFormat(minorVersion, "heif"), null);
+  const afterBox = Uint8Array.from([...heif("heic"), ...text("msf1")]);
+  assert.equal(animatedFormat(afterBox, "heif"), null);
+  const truncated = heif("isom", "msf1").subarray(0, 19);
+  assert.equal(detectFormat(truncated), null);
+  assert.equal(animatedFormat(truncated, "heif"), null);
 });
 
 /**

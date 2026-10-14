@@ -717,6 +717,19 @@ code {
 .tile-frame:disabled {
   opacity: 1;
 }
+/* Keep the preview focus ring inside the tile's clipped edges. */
+.tile-frame:focus-visible {
+  outline-offset: -3px;
+}
+.tile-frame:focus-visible::after {
+  /* The positioned thumbnail otherwise paints over the inward outline. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  outline: inherit;
+  outline-offset: inherit;
+  pointer-events: none;
+}
 .tile-frame img {
   /* Absolute, so the thumbnail fills the fixed-ratio frame instead of keeping the source's own
      aspect ratio, and so the placeholder behind it stays centred. */
@@ -754,11 +767,19 @@ code {
   margin: 2px 0 0;
 }
 .tile-button {
-  width: 40px;
-  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
   flex-shrink: 0;
-  margin: auto 10px 10px auto;
-  padding: 0;
+  margin: auto 10px 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 650;
   text-decoration: none;
 }
 .tile-button:hover {

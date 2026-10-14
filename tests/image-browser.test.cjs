@@ -28,6 +28,7 @@ function python(args) {
     encoding: "utf8",
   });
   assert.equal(process.status, 0, process.stderr || process.stdout);
+  return process.stdout;
 }
 python([path.join(__dirname, "image_fixtures.py"), fixtures]);
 const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
@@ -169,17 +170,19 @@ async function verifyInputDownload(page, index, fixture, name = fixture) {
     `input ${name} retains its exact bytes and metadata`,
   );
 }
-/** Ensures compact icons keep distinct accessible names, tooltips and usable touch targets. */
-async function checkDownloadIcons(page) {
+/** Ensures text buttons distinguish inputs/results on touch screens and keep filename labels. */
+async function checkDownloadButtons(page) {
   const links = await page
     .locator(".tile-button:visible")
     .evaluateAll((links) =>
       links.map((link) => ({
         label: link.getAttribute("aria-label"),
-        expected: `Download ${link.closest("#sourceList") ? "input" : "converted"} ${link.download}`,
+        expected: `Download ${link.closest("#sourceList") ? "input" : "result"} ${link.download}`,
+        expectedText: link.closest("#sourceList")
+          ? "Download input"
+          : "Download result",
         title: link.title,
         text: link.textContent.trim(),
-        decorativeIcon: link.querySelector('svg[aria-hidden="true"]') !== null,
         width: link.getBoundingClientRect().width,
         height: link.getBoundingClientRect().height,
       })),
@@ -189,17 +192,16 @@ async function checkDownloadIcons(page) {
       links.every(
         (link) => link.label === link.expected && link.title === link.expected,
       ),
-    "all input and converted download icons have filename-specific labels and tooltips",
+    "all input and result download buttons have filename-specific labels and tooltips",
   );
   check(
     links.every(
       (link) =>
-        link.text === "" &&
-        link.decorativeIcon &&
-        link.width === 40 &&
-        link.height === 40,
+        link.text === link.expectedText &&
+        link.width >= 40 &&
+        link.height >= 40,
     ),
-    "download links show only a decorative icon within a compact 40px touch target",
+    "download buttons visibly distinguish input/result files and retain at least 40px touch targets",
   );
 }
 /** Converts one fixture as a single-file batch and returns the downloaded file path. */
@@ -720,16 +722,23 @@ async function verifyPreviewPrefix(browser, open) {
       const retained = await convertAndDownload(page, "real.heic", {
         keepExif: true,
       });
-      python([
-        path.join(__dirname, "verify_real_heic.py"),
-        realHeic,
-        retained,
-        "--keep-exif",
-      ]);
+      const metadata = JSON.parse(
+        python([
+          path.join(__dirname, "verify_real_heic.py"),
+          realHeic,
+          retained,
+          "--keep-exif",
+        ]),
+      );
       verified++;
+      /** Ensures the tile describes actual source metadata rather than implying GPS coverage. */
       check(
-        true,
-        "a real HEIC photo keeps its EXIF, including GPS, when that is requested",
+        (await tileStates(page))[0].meta.includes(
+          metadata.source_has_exif ? "EXIF kept" : "no EXIF in the source",
+        ),
+        metadata.source_has_exif
+          ? "a tagged real HEIC retains its source EXIF when requested"
+          : "a real HEIC without source EXIF gains none when retention is requested",
       );
       await page.locator("#keepExif").setChecked(false);
     }
@@ -804,6 +813,22 @@ async function verifyPreviewPrefix(browser, open) {
       "changing the EXIF setting clears the result it no longer describes",
     );
 
+    /** Ensures invalidation clears stale labels as well as the unavailable result URL. */
+    check(
+      await page
+        .locator("#resultList .tile-download")
+        .evaluateAll((links) =>
+          links.every(
+            (link) =>
+              link.hidden &&
+              ["href", "download", "title", "aria-label"].every(
+                (name) => !link.hasAttribute(name),
+              ),
+          ),
+        ),
+      "invalidated output downloads retain no URL, filename, tooltip or accessible name",
+    );
+
     // Quality reaches the lossy encoders and is hidden for lossless output.
     const small = await convertAndDownload(page, "photo.jpg", { quality: 50 });
     const large = await convertAndDownload(page, "photo.jpg", { quality: 100 });
@@ -832,6 +857,25 @@ async function verifyPreviewPrefix(browser, open) {
       "notes.txt",
       "Choose a HEIC, JPEG, PNG or WebP image",
     );
+    /** Ensures HEIF sequence brands fail before loading the decoder, even as compatible brands. */
+    const sequencePage = await open();
+    let sequenceDecoderRequests = 0;
+    sequencePage.on("request", (request) => {
+      if (decoderURL.test(request.url())) sequenceDecoderRequests++;
+    });
+    await sequencePage.goto(converterURL);
+    for (const fixture of ["anim-hevc.heic", "anim-compatible.heic"])
+      await expectFailure(
+        sequencePage,
+        fixture,
+        "Animated images are not supported",
+      );
+    check(
+      sequenceDecoderRequests === 0,
+      "rejected HEIF sequences never load the decoder",
+    );
+    await sequencePage.close();
+
     await expectFailure(page, "anim.gif", "Choose a HEIC, JPEG, PNG or WebP");
     await expectFailure(page, "anim.webp", "Animated images are not supported");
     /** Ensures a valid unknown WebP chunk cannot silently discard the animation's frames. */
@@ -1014,7 +1058,7 @@ async function verifyPreviewPrefix(browser, open) {
       "photo.webp",
     ].entries())
       await verifyInputDownload(page, index, fixture);
-    await checkDownloadIcons(page);
+    await checkDownloadButtons(page);
     if (screenshotDir) {
       await page.screenshot({
         path: path.join(screenshotDir, "image-input-downloads-1440.png"),
@@ -1262,7 +1306,35 @@ async function verifyPreviewPrefix(browser, open) {
     await waitBatch(page, 60000);
     check(true, "Enter on the focused button converts the batch");
     const keyboardTiles = page.locator("#resultList .tile");
-    await keyboardTiles.nth(1).locator(".tile-frame").focus();
+    await keyboardTiles.first().locator(".tile-download").focus();
+    await page.keyboard.press("Tab");
+    /** Ensures real Tab navigation reveals all sides of the preview's focus ring above its image. */
+    check(
+      await keyboardTiles
+        .nth(1)
+        .locator(".tile-frame")
+        .evaluate((frame) => {
+          const outline = getComputedStyle(frame, "::after");
+          return (
+            frame === document.activeElement &&
+            frame.matches(":focus-visible") &&
+            outline.content !== "none" &&
+            outline.position === "absolute" &&
+            outline.outlineStyle === "solid" &&
+            outline.outlineWidth === "3px" &&
+            parseFloat(outline.outlineOffset) <=
+              -parseFloat(outline.outlineWidth) &&
+            [outline.top, outline.right, outline.bottom, outline.left].every(
+              (edge) => edge === "0px",
+            )
+          );
+        }),
+      "the preview focus ring stays inside all four edges and above the thumbnail",
+    );
+    if (screenshotDir)
+      await keyboardTiles.nth(1).screenshot({
+        path: path.join(screenshotDir, "image-preview-keyboard-focus.png"),
+      });
     await page.keyboard.press("Enter");
     check(
       (await page.locator("#resultPreview").getAttribute("alt")).includes(
@@ -1655,7 +1727,7 @@ async function verifyPreviewPrefix(browser, open) {
           .isVisible()),
       "every result keeps its thumbnail and download control on a narrow screen",
     );
-    await checkDownloadIcons(mobilePage);
+    await checkDownloadButtons(mobilePage);
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await mobilePage.screenshot({

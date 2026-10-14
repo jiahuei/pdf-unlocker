@@ -277,6 +277,13 @@ def write_fixtures(directory):
     with open(directory / "oversize.jpg", "wb") as oversize:
         oversize.truncate(41 * 1024 * 1024)
     (directory / "notes.txt").write_text("This is not an image.\n")
+    # Complete ftyp headers are enough: sequence policy must reject before any image decode.
+    (directory / "anim-hevc.heic").write_bytes(
+        struct.pack(">I4s4sI", 16, b"ftyp", b"hevc", 0)
+    )
+    (directory / "anim-compatible.heic").write_bytes(
+        struct.pack(">I4s4sI4s", 20, b"ftyp", b"heic", 0, b"msf1")
+    )
     (directory / "corrupt.heic").write_bytes(b"\x00\x00\x00\x18ftypheic" + bytes(64))
     write_heif_fixtures(directory)
 
