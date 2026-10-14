@@ -10,8 +10,7 @@ const ImageConverter = (() => {
   const MAX_JPEG_EXIF = 0xffff - 2 - 6;
   const HEIF_SCRIPT_URL =
     "https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js";
-  // Every brand a HEIC photo can carry, including the sequence brands: those are rejected by the
-  // decoded-image count instead, so one message covers burst and animated HEIF files alike.
+  // Every brand a HEIC photo can carry, including collections with several images.
   // AVIF is deliberately absent: its AV1 codec is not in the decoder bundle this site loads.
   const HEIF_BRANDS = new Set([
     "heic",
@@ -159,7 +158,7 @@ const ImageConverter = (() => {
 
   /**
    * Reports animated inputs, which would otherwise be reduced to one frame without telling the
-   * user. Multi-image HEIF files are caught after decoding, where the frame count is known.
+   * user. HEIF collections report their image count after decoding.
    */
   function animatedFormat(bytes, format) {
     if (format === "png" && pngAnimated(bytes)) return "png";
@@ -507,13 +506,8 @@ const ImageConverter = (() => {
         "decode",
         "This HEIC file could not be read. Choose a HEIC photo and try again.",
       );
-    if (images.length > 1) {
-      for (const extra of images) extra.free();
-      throw failure(
-        "multiple",
-        `This file holds ${images.length} images. Choose a file with a single still image.`,
-      );
-    }
+    // Only the first image is exported; release the other handles before allocating its pixels.
+    for (const extra of images.slice(1)) extra.free();
     const image = images[0];
     try {
       const width = image.get_width(),
@@ -567,6 +561,7 @@ const ImageConverter = (() => {
         bitmap,
         width,
         height,
+        imageCount: images.length,
         exif: keepExif
           ? normalizeExif(heifExif(heif, image), width, height)
           : null,
@@ -884,20 +879,15 @@ const ImageConverter = (() => {
         "animated",
         "Animated images are not supported. Choose a single still image.",
       );
-    if (format === "jpeg") {
-      const images = jpegImageCount(bytes);
-      if (images > 1)
-        throw failure(
-          "multiple",
-          `This file holds ${images} images. Choose a file with a single still image.`,
-        );
-    }
     const source =
       format === "heif"
         ? await decodeHeif(bytes, onStage, keepExif)
         : await decodeNative(bytes, format, keepExif);
     try {
-      return await encode(source, output, quality);
+      const result = await encode(source, output, quality);
+      result.imageCount =
+        format === "jpeg" ? jpegImageCount(bytes) : source.imageCount || 1;
+      return result;
     } finally {
       source.bitmap.close();
     }

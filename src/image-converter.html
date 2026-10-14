@@ -237,8 +237,8 @@
           <ul class="notes-list">
             <li>
               HEIC input covers HEVC-encoded photos, which is what iPhone and
-              recent Android cameras write. AVIF, animated HEIF and HEIC burst
-              files are not supported.
+              recent Android cameras write. AVIF and animated HEIF files are not
+              supported.
             </li>
             <li>
               Orientation and supported colour profiles are applied before
@@ -257,9 +257,9 @@
               WebP keep transparency.
             </li>
             <li>
-              Animated GIF, APNG and animated WebP files are rejected rather
-              than quietly keeping their first frame, as are files holding
-              several images.
+              Animated GIF, APNG and animated WebP files are rejected. If a HEIF
+              or JPEG/MPO file holds several images, only the first is
+              converted, with a message on its result tile saying so.
             </li>
             <li>
               Limits are 40 MB per file and 50 megapixels decoded. Very large

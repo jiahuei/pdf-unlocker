@@ -594,18 +594,25 @@ test("publishes the documented outputs and limits", () => {
   assert.equal(MAX_PIXELS, 50 * 1000 * 1000);
 });
 
-/** Ensures MPF multi-picture JPEGs are rejected before native decoding can drop extra images. */
-test("rejects multi-picture JPEGs while allowing single-image MPF", async () => {
+/** Ensures MPF counts survive first-image conversion, including both TIFF byte orders. */
+test("reports multi-picture JPEG counts while converting the first image", async () => {
   const source = readFileSync(
     require.resolve("../src/image-converter.js"),
     "utf8",
   );
   let decodes = 0;
+  let closes = 0;
   const context = {
     Blob,
     createImageBitmap: async () => {
       decodes++;
-      throw new Error("Reached the native decoder");
+      return { width: 2, height: 1, close: () => closes++ };
+    },
+    document: {
+      createElement: () => ({
+        getContext: () => ({ fillRect() {}, drawImage() {} }),
+        toBlob: (callback, type) => callback(new Blob(["encoded"], { type })),
+      }),
     },
     module: { exports: {} },
   };
@@ -639,27 +646,27 @@ test("rejects multi-picture JPEGs while allowing single-image MPF", async () => 
           0xd9,
         ]),
       ]);
-    for (const count of [2, 4])
-      await assert.rejects(
-        context.module.exports.convert(file(mpf(count)), OUTPUTS[0], 0.8),
-        (error) =>
-          error.code === "multiple" &&
-          error.message.includes(`holds ${count} images`),
+    for (const count of [2, 4]) {
+      const result = await context.module.exports.convert(
+        file(mpf(count)),
+        OUTPUTS[0],
+        0.8,
       );
+      assert.equal(result.imageCount, count);
+      assert.equal(result.blob.type, "image/jpeg");
+    }
     // An incomplete index must not read beyond its segment or invent an extra picture.
     for (const payload of [
       mpf(1),
       mpf(2).slice(0, 20),
       [0, 0, 0, 0, ...mpf(2)],
     ])
-      await assert.rejects(
-        context.module.exports.convert(file(payload), OUTPUTS[0], 0.8),
-        (error) => error.code === "decode",
+      assert.equal(
+        (await context.module.exports.convert(file(payload), OUTPUTS[0], 0.8))
+          .imageCount,
+        1,
       );
   }
-  assert.equal(
-    decodes,
-    6,
-    "only single-image or unrecognised MPF reaches decoding",
-  );
+  assert.equal(decodes, 10, "each file is decoded once");
+  assert.equal(closes, decodes, "every decoded bitmap is closed");
 });

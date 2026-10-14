@@ -150,7 +150,7 @@ function updateEntry(entry) {
   tile.tile.toggleAttribute("data-preview", previewed === entry);
   tile.name.textContent = result ? result.name : entry.file.name;
   tile.meta.textContent = result
-    ? [geometry(result), sizeLabel(result.size), result.exif]
+    ? [geometry(result), sizeLabel(result.size), result.exif, result.notice]
         .filter(Boolean)
         .join(" · ")
     : error || STATUS_TEXT[status];
@@ -300,6 +300,10 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
         url: URL.createObjectURL(result.blob),
         name: names[index],
         label: output.label,
+        notice:
+          result.imageCount > 1
+            ? `This file holds ${result.imageCount} images. Only the first image was kept.`
+            : "",
         width: result.width,
         height: result.height,
         size: result.blob.size,
