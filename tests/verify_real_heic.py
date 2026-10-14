@@ -16,19 +16,23 @@ GRID = 32
 
 def reference_pixels(handle):
     """Decode the source with an independent libheif and map it to sRGB when it is tagged."""
-    reference = handle.to_pillow().convert("RGB")
+    reference = handle.to_pillow().convert("RGBA")
     profile = handle.info.get("icc_profile")
-    if not profile:
-        return reference, None
-    return (
-        ImageCms.profileToProfile(
+    profile_name = None
+    if profile:
+        source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile))
+        reference = ImageCms.profileToProfile(
             reference,
-            ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+            source_profile,
             ImageCms.createProfile("sRGB"),
-            outputMode="RGB",
-        ),
-        ImageCms.getProfileName(ImageCms.ImageCmsProfile(io.BytesIO(profile))).strip(),
-    )
+            outputMode="RGBA",
+        )
+        profile_name = ImageCms.getProfileName(source_profile).strip()
+    # HEIC can carry alpha even for camera photos. JPEG flattens it over white after
+    # colour conversion, so dropping alpha here would falsely report colour errors.
+    flattened = Image.new("RGBA", reference.size, "white")
+    flattened.alpha_composite(reference)
+    return flattened.convert("RGB"), profile_name
 
 
 def verify_real_heic(source, output, keep_exif=False):

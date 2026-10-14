@@ -1,6 +1,7 @@
 """Generate synthetic image fixtures for the converter's browser regressions."""
 
 import io
+import struct
 import sys
 from pathlib import Path
 
@@ -91,6 +92,22 @@ def write_heif_fixtures(directory):
     multi = pillow_heif.from_pillow(gradient((320, 200), (0, 0, 255)))
     multi.add_from_pillow(gradient((160, 120), (255, 255, 0)))
     multi.save(directory / "multi.heic")
+
+    # libde265 before 1.0.16 selects the wrong scaling matrix for 32x32 chroma
+    # blocks in 4:4:4 images. A smooth gradient makes the encoder use those blocks.
+    scaling = gradient((256, 128), (255, 0, 0))
+    pixels = b"".join(struct.pack("<H", channel * 4) for channel in scaling.tobytes())
+    pillow_heif.from_bytes("RGB;10", scaling.size, pixels).save(
+        directory / "scaling-list.heic",
+        quality=80,
+        chroma="444",
+        save_nclx_profile=False,
+        enc_params={"x265:scaling-list": "default"},
+    )
+    with Image.open(directory / "scaling-list.heic") as decoded:
+        assert decoded.info["bit_depth"] == 10
+        assert decoded.info["chroma"] == 444
+        decoded.save(directory / "scaling-list-reference.png")
 
     # Public-domain profile plus synthetic swatches: the reference uses LittleCMS, independently
     # of the browser's colour management, and accounts for the HEIC encoder's rounding.

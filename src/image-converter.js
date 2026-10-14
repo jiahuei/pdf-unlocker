@@ -8,8 +8,7 @@ const ImageConverter = (() => {
   const TIFF_BIG = [0x4d, 0x4d, 0x00, 0x2a]; // "MM" with the same magic number
   // A JPEG application segment carries a 16-bit length that includes its own two bytes.
   const MAX_JPEG_EXIF = 0xffff - 2 - 6;
-  const HEIF_SCRIPT_URL =
-    "https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js";
+  const HEIF_SCRIPT_URL = "vendor/libheif-1.23.6/libheif-bundle.js";
   // Every brand a HEIC photo can carry, including collections with several images.
   // AVIF is deliberately absent: its AV1 codec is not in the decoder bundle this site loads.
   const HEIF_BRANDS = new Set([
@@ -455,7 +454,7 @@ const ImageConverter = (() => {
 
   /** Reads the Exif item a HEIC photo carries, which no browser API exposes. */
   function heifExif(heif, image) {
-    // libheif-js exposes this C API without an Embind wrapper. Its WASM32 ABI places a 12-byte
+    // libheif exposes this C API without an Embind wrapper. Its WASM32 ABI places a 12-byte
     // heif_error buffer before the documented arguments, as heifColorProfile already does.
     const handle = image.handle.$$.ptr;
     const count = heif._heif_image_handle_get_number_of_metadata_blocks(
@@ -572,7 +571,7 @@ const ImageConverter = (() => {
   }
 
   function heifColorProfile(heif, image) {
-    // libheif-js 1.23.5 exposes this C API without an Embind wrapper. Its WASM32 ABI uses
+    // libheif exposes this C API without an Embind wrapper. Its WASM32 ABI uses
     // a 12-byte heif_error return buffer before the explicit handle and destination arguments.
     const handle = image.handle.$$.ptr;
     const size = heif._heif_image_handle_get_raw_color_profile_size(handle);

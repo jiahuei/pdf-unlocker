@@ -30,14 +30,15 @@ function python(args) {
   assert.equal(process.status, 0, process.stderr || process.stdout);
 }
 python([path.join(__dirname, "image_fixtures.py"), fixtures]);
-// A real camera photo exercises what synthetic fixtures cannot: grid-derived HEVC tiles, a wide
-// gamut profile, container rotation and auxiliary items. It is copied in from TEST_HEIC so no
-// personal photograph, or the GPS metadata inside it, is committed to the repository.
-const realHeic = process.env.TEST_HEIC;
+const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
+// The approved camera fixture covers real 10-bit 4:4:4 tiles and Display P3 colours.
+// TEST_HEIC can substitute another private photo without adding it to the repository.
+const realHeic =
+  process.env.TEST_HEIC ||
+  (heicFixtures ? path.join(__dirname, "fixtures", "IMG_0308.heic") : null);
 if (realHeic && !fs.existsSync(realHeic))
   throw new Error(`TEST_HEIC does not exist: ${realHeic}`);
 if (realHeic) fs.copyFileSync(realHeic, path.join(fixtures, "real.heic"));
-const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
 
 /** Checks a real download independently with Pillow instead of trusting the success message. */
 function verify(file, ...expectations) {
@@ -376,6 +377,27 @@ async function verifyPreviewPrefix(browser, open) {
       (await tileStates(page))[0].download === "photo.jpg",
       "conversion works beneath the preview prefix",
     );
+    /** Ensures the local decoder is fetched beneath the preview prefix and produces valid pixels. */
+    if (heicFixtures) {
+      const loaded = page.waitForResponse(
+        `${prefix}vendor/libheif-1.23.6/libheif-bundle.js`,
+      );
+      await page
+        .locator("#imageFile")
+        .setInputFiles(path.join(fixtures, "photo.heic"));
+      await page.locator("#convertBtn").click();
+      check((await loaded).ok(), "the preview serves its own HEIC decoder");
+      await waitBatch(page);
+      verify(
+        await downloadTile(page, 0, "photo.jpg"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--pixel",
+        "20,20,255,0,0",
+      );
+    }
     await page.locator(".brand").click();
     await page.waitForURL(/pr-preview\/99\/index\.html$/);
     check(
@@ -572,6 +594,16 @@ async function verifyPreviewPrefix(browser, open) {
           );
         }
     if (heicFixtures) {
+      /** Guards against magenta/green blocks from incorrect 10-bit 4:4:4 chroma scaling. */
+      verify(
+        await convertAndDownload(page, "scaling-list.heic", { format: "png" }),
+        "--format",
+        "PNG",
+        "--size",
+        "256x128",
+        "--reference",
+        path.join(fixtures, "scaling-list-reference.png"),
+      );
       // The core HEIC-to-JPG case, decoded by the lazily downloaded WebAssembly decoder.
       verify(
         await convertAndDownload(page, "photo.heic"),
@@ -1540,7 +1572,7 @@ async function verifyPreviewPrefix(browser, open) {
     check(uploads.length === 0, `no file bytes are uploaded: ${uploads}`);
     check(pageErrors.length === 0, `no page errors: ${pageErrors}`);
     console.log(
-      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "not supplied through TEST_HEIC"}.`,
+      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "skipped, pillow-heif unavailable"}.`,
     );
   } finally {
     await browser.close();

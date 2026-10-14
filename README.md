@@ -107,13 +107,13 @@ npm install --prefix /tmp/pdf-unlocker-browser-tests playwright@1.58.2
 /tmp/pdf-unlocker-browser-tests/node_modules/.bin/playwright install chromium
 PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/browser.test.cjs
 PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/image-browser.test.cjs
-# Optional: also convert a real camera photo kept outside the repository
+# Optional: override the bundled regression photo with another camera photo
 TEST_HEIC=/path/to/photo.heic PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/image-browser.test.cjs
 ```
 
 Run the server in a separate terminal. Browser suites independently verify downloads with pypdf or Pillow. See [browser coverage](SPEC.md#browser-tests).
 
-Internet access is required for browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. `TEST_HEIC` adds a real camera photo kept outside the repository; never commit the photo or its derivatives because they can carry personal metadata. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from physical iOS Safari verification.
+Internet access is required for browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. With `pillow-heif` installed, the suite tests the approved `tests/fixtures/IMG_0308.heic` photograph in both EXIF modes by default. `TEST_HEIC` overrides that case with another photo kept outside the repository; additional personal photos or derivatives require explicit permission before committing. See [fixture provenance](tests/fixtures/README.md). OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from physical iOS Safari verification.
 
 The push workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12 for all branches, plus the Node tests above. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
 
@@ -145,4 +145,4 @@ Both tools require browser support for WebAssembly, canvas encoding and `createI
 
 ## License
 
-MIT License - feel free to use and modify for your own projects. The bundled third-party libraries keep their own licences: Pyodide (MPL-2.0), PDF.js (Apache-2.0), pypdf (BSD-3-Clause) and libheif-js with libheif and libde265 (LGPL-3.0). They are loaded from public CDNs at runtime and are not redistributed by this repository.
+MIT License - feel free to use and modify for your own projects. The bundled third-party libraries keep their own licences: Pyodide (MPL-2.0), PDF.js (Apache-2.0), pypdf (BSD-3-Clause) and libheif with libde265 (LGPL-3.0). The PDF libraries load from public CDNs. The HEIC decoder is served locally; its [exact sources, licences and rebuild instructions](src/vendor/libheif-1.23.6/README.md) accompany the checked-in bundle.

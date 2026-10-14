@@ -17,7 +17,8 @@ This document defines the architecture, behavior contracts and implementation co
 │   ├── image-converter.js    # Format table, input detection and conversion pipeline
 │   ├── debug.js              # Opt-in Eruda console shared by both tool pages
 │   ├── style.css             # Local responsive styling shared by all pages
-│   └── assets/               # Favicons, touch icons and web manifest
+│   ├── assets/               # Favicons, touch icons and web manifest
+│   └── vendor/               # Pinned HEIC decoder and third-party notices
 ├── .github/workflows/
 │   ├── deploy.yml            # Publishes main and same-repository PR snapshots
 │   └── lint.yml              # Prettier, Ruff and Node logic checks
@@ -26,7 +27,7 @@ This document defines the architecture, behavior contracts and implementation co
 ├── ruff.toml                 # Python lint/format settings targeting Python 3.11
 ├── package.json              # Pinned development-only Prettier and scripts
 ├── package-lock.json         # Reproducible npm installation
-├── scripts/                  # Static Pages packaging and preview comments
+├── scripts/                  # Pages packaging, preview comments and optional decoder rebuild
 ├── tests/                    # Python document, Node logic and Playwright browser tests
 ├── tasks/                    # Local, untracked completion records and plans
 ├── AGENTS.md                 # Repository guidance
@@ -50,7 +51,7 @@ The application has no build step or runtime server. Styling is local. `package.
 - HTML5 and local CSS (no styling CDN required)
 - JavaScript, with no build step and no runtime server
 - PDF Unlocker: Pyodide 0.23.4 (Python in the browser) with its cryptography package for AES PDFs, pypdf 4.3.1 installed through micropip, and PDF.js 3.11.174 for page previews
-- Image Converter: the browser's own `createImageBitmap` and canvas encoders for JPEG, PNG and WebP, plus libheif-js 1.23.5 (LGPL-3.0, bundling libheif with the libde265 HEVC decoder) loaded from jsDelivr only when a HEIC file is converted
+- Image Converter: the browser's own `createImageBitmap` and canvas encoders for JPEG, PNG and WebP, plus a local WebAssembly build of libheif 1.23.6 with libde265 1.1.3 (LGPL-3.0), loaded only when a HEIC file is converted. `src/vendor/libheif-1.23.6/` contains the generated bundle, source links and licence notices; `scripts/build-heif.sh` rebuilds it with pinned sources and tools. Normal development and Pages deployment still require no build
 - Eruda 3.4.3 loads only when debugging is enabled
 
 Keep PDF.js and its worker on matching versions. Inspect source declarations before changing dependencies, and preserve the [third-party licence attribution](README.md#license).
@@ -81,7 +82,7 @@ Passwords are derived locally only when you select Unlock PDF. The generated val
 
 - The supported matrix is HEIC/HEIF, JPEG, PNG and WebP input to JPEG, PNG or WebP output; keep it aligned with the [published matrix](README.md#image-converter), page copy and Node tests.
 - Recognize files from their bytes, not their MIME type or extension. Camera files frequently declare neither reliably.
-- Decode JPEG/PNG/WebP with `createImageBitmap`; always use libheif-js for HEIC so image selection and counting do not depend on native HEIC support. Fetch its approximately 2 MB WebAssembly decoder only on the first HEIC conversion and reuse it thereafter. JPEG/PNG/WebP conversion does not load it.
+- Decode JPEG/PNG/WebP with `createImageBitmap`; always use libheif for HEIC so image selection and counting do not depend on native HEIC support. Fetch its approximately 2 MB WebAssembly decoder from the same site only on the first HEIC conversion and reuse it thereafter. JPEG/PNG/WebP conversion does not load it.
 - Load the HEIC decoder with a script element and clear failed load state so a retry can succeed. Avoid a cached dynamic import: a failed module resolution can persist for the document lifetime.
 - Reject unsupported containers and animated GIF/APNG/WebP. Convert only the first image of HEIF collections and JPEG/MPO files with multiple MPF entries, and report the source image count and that only the first was kept in a persistent result-tile notice. Release unused HEIF image handles without rendering them. Selecting several files is an ordinary batch, in which each file is validated on its own. AVIF and HDR gain maps are unsupported.
 - Reject inputs above 40 MB or 50 megapixels decoded. Browser canvas limits can be lower and must produce an actionable conversion error. Native dimensions are known only after bitmap allocation; close the bitmap when size validation fails.
@@ -104,6 +105,7 @@ Apply source ICC/NCLX profiles before exporting sRGB pixels. Do not copy the sou
 - Reject non-RGB ICC profiles, including grayscale, with an explicit unsupported-profile error. An RGB PNG cannot carry a Gray ICC profile correctly; do not silently reinterpret those samples as sRGB.
 - SDR NCLX supports sRGB and Display P3 primaries with sRGB or BT.709 transfer. Use the corresponding `ImageData` colour space and convert BT.709 transfer to sRGB. Display P3 requires browser support for Display P3 `ImageData`.
 - Reject unsupported NCLX spaces, including HDR. Untagged or unspecified colours follow the sRGB assumption.
+- Use a decoder containing the libde265 fix for 32-by-32 chroma scaling (included in 1.1.3). The synthetic 10-bit 4:4:4 default-scaling-list fixture must match an independent decode; do not replace the bundle with libheif-js 1.23.5, which embeds the affected libde265 1.0.15.
 - Keep the independently verified colour fixtures and their [provenance and licence](tests/fixtures/README.md).
 
 ### Metadata retention
@@ -132,11 +134,11 @@ The tools directory and converter must not initialize Pyodide or PDF.js. Keep na
 
 ## Verification coverage
 
-Use [README verification commands](README.md#development-and-verification) and the workflow checks in `.github/workflows/lint.yml`. Verify downloaded file contents, not just success messages. Keep synthetic fixtures in the repository; never commit personal photos or their derivatives.
+Use [README verification commands](README.md#development-and-verification) and the workflow checks in `.github/workflows/lint.yml`. Verify downloaded file contents, not just success messages. Prefer synthetic fixtures. The owner-approved `tests/fixtures/IMG_0308.heic` is the documented real-photo exception; additional personal photos or derivatives require explicit permission before committing.
 
 ### Document and pure-logic tests
 
-The document tests verify RC4, AES-128 and AES-256 password removal, incorrect and whitespace passwords, malformed/plain documents, and preserved text, metadata, outlines, attachments and form fields. `tests/image_fixtures.py` writes the synthetic image fixtures used by the browser suite: still JPEG/PNG/WebP inputs, a transparent PNG, an EXIF-rotated JPEG, all eight WebP EXIF orientations, a multi-picture JPEG/MPO, GPS-tagged JPEG and HEIC inputs whose position is synthetic (including JPEG marker padding and a longer HEIF EXIF offset), animated GIF/APNG/WebP inputs (including a valid unknown WebP chunk), multi-image/corrupt/untagged HEIC files, oversized input, and ICC/NCLX colour fixtures. Colour references use independent Pillow/LittleCMS conversion and the [CC0 Display P3 test profile](tests/fixtures/README.md); transparent, unsupported grayscale ICC and unsupported HDR cases are included. HEIC fixtures need the optional `pillow-heif`; when it is absent they are skipped and the suite reports that.
+The document tests verify RC4, AES-128 and AES-256 password removal, incorrect and whitespace passwords, malformed/plain documents, and preserved text, metadata, outlines, attachments and form fields. `tests/image_fixtures.py` writes the synthetic image fixtures used by the browser suite: still JPEG/PNG/WebP inputs, a transparent PNG, an EXIF-rotated JPEG, all eight WebP EXIF orientations, a multi-picture JPEG/MPO, GPS-tagged JPEG and HEIC inputs whose position is synthetic (including JPEG marker padding and a longer HEIF EXIF offset), animated GIF/APNG/WebP inputs (including a valid unknown WebP chunk), multi-image/corrupt/untagged HEIC files, oversized input, and ICC/NCLX colour fixtures, including a 10-bit 4:4:4 scaling-list regression. Colour references use independent Pillow/LittleCMS conversion and the [CC0 Display P3 test profile](tests/fixtures/README.md); transparent, unsupported grayscale ICC and unsupported HDR cases are included. HEIC fixtures need the optional `pillow-heif`; when it is absent they are skipped and the suite reports that.
 
 The Node suites assert statement formats, calendar and phone validation, Pages snapshots and comments, and the converter's format detection from file signatures, animation detection, output filenames, the batch allocation of colliding output names, published output table and documented limits, plus the EXIF byte surgery: the orientation and dimension rewrites in both TIFF byte orders, declared HEIF offsets, JPEG marker padding and the JPEG, PNG and WebP transplants, whose PNG CRC is checked against Node's own `zlib.crc32`.
 
@@ -148,7 +150,7 @@ The image suite converts the synthetic fixtures in a real browser, downloads the
 
 It also covers batches: multiple files through the picker and through a synthetic drop in selection order, both galleries' tiles with their thumbnails and captions, a HEIC input tile that keeps its placeholder and gains its geometry from the conversion, one shared format/quality/EXIF setting applied to every file, invalid files between valid ones and batches in which every file fails, colliding output names including a suffix another source already uses, previewing a result through its thumbnail, singular wording for a single file, and rerunning a batch after a failure. A held converter substitute asserts that an invalidated batch stops after its active file, creates no result URL and never overlaps the batch that replaced it; a blocked HEIC decoder download asserts the same for real decoder ownership, and a batch of HEIC photos asserts that repeated conversions stay serialized. Object-URL accounting covers source thumbnails and results across reset, batch replacement and page hide.
 
-`TEST_HEIC` exercises a real camera photo in both metadata modes using an independent libheif decode, LittleCMS transform and source geometry/EXIF comparison. Real camera files cover grid-derived HEVC tiles, camera colour profiles, container rotation and auxiliary items. Keep them outside the repository because they can contain GPS, device and timestamp metadata. Chromium mobile emulation does not establish physical iOS/Safari support.
+When `pillow-heif` is installed, `tests/fixtures/IMG_0308.heic` is tested by default in both metadata modes using an independent libheif decode, LittleCMS transform and source geometry/EXIF comparison. This approved real-photo fixture exercises tiled 10-bit 4:4:4 Display P3 decoding. `TEST_HEIC` can override it with another camera photo to cover further container rotation or auxiliary-image cases; keep those additional photos outside the repository unless explicitly approved. See [fixture provenance](tests/fixtures/README.md). Chromium mobile emulation does not establish physical iOS/Safari support.
 
 ### Deployment tests
 
