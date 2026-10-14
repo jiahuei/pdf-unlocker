@@ -84,6 +84,8 @@ Internet access is required to load the browser libraries and Python packages. P
 
 ## Development and verification
 
+The checked-in HEIC decoder was compiled from source. See the [verified Linux rebuild instructions](src/vendor/libheif-1.23.6/README.md#rebuilding-on-linux) for pinned SDK/CMake installation, source checksums, the build command and output verification. Ordinary development does not require rebuilding it.
+
 Tests use synthetic documents and images, and keep their dependencies outside the project:
 
 ```sh
