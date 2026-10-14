@@ -175,8 +175,9 @@ function updateEntry(entry) {
 }
 function createTiles(entry) {
   entry.sourceTile = sourceTile(entry);
-  entry.sourceTile.image.src = entry.sourceUrl;
   entry.resultTile = resultTile(entry);
+  // Assigned last: the thumbnail's load handler renders the entry, which needs both tiles.
+  entry.sourceTile.image.src = entry.sourceUrl;
   updateEntry(entry);
 }
 function render() {

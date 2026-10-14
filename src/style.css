@@ -651,11 +651,6 @@ code {
   overflow-wrap: anywhere;
   margin-bottom: 16px;
 }
-.result-meta {
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin: -10px 0 16px;
-}
 .batch-summary {
   font-size: 0.8rem;
   font-weight: 650;
