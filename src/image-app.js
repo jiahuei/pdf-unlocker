@@ -118,7 +118,7 @@ function tileShell(entry, previewable, onLoad) {
   return { tile, frame, image, name, meta };
 }
 function sourceTile(entry) {
-  return tileShell(entry, false, (image) => {
+  const parts = tileShell(entry, false, (image) => {
     // Chromium reports oriented geometry for JPEG and PNG but ignores WebP EXIF orientation and
     // cannot render HEIC at all, so a finished conversion overwrites these numbers with its own.
     if (entry.result) return;
@@ -126,6 +126,14 @@ function sourceTile(entry) {
     entry.height = image.naturalHeight;
     updateEntry(entry);
   });
+  const download = document.createElement("a");
+  download.className = "tile-button tile-source-download";
+  download.textContent = "Download input";
+  download.href = entry.sourceUrl;
+  download.download = entry.file.name;
+  download.setAttribute("aria-label", `Download input ${entry.file.name}`);
+  parts.tile.append(download);
+  return parts;
 }
 function resultTile(entry) {
   const parts = tileShell(entry, true);
@@ -196,9 +204,9 @@ function releaseResults() {
     }
 }
 /**
- * Source thumbnails belong to the selection rather than to a conversion, so only replacing or
- * clearing the selection releases them. Hiding the page keeps them: a back/forward-cache restore
- * would otherwise show empty tiles for files that are still chosen.
+ * Source thumbnails and downloads belong to the selection, so only replacing or clearing it
+ * releases them. Hiding the page keeps them: a back/forward-cache restore would otherwise leave
+ * broken thumbnails and downloads for files that are still chosen.
  */
 function releaseSources() {
   for (const entry of entries) {

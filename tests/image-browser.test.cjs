@@ -153,6 +153,22 @@ async function downloadTile(page, index, expected) {
   await download.saveAs(file);
   return file;
 }
+/** Ensures input downloads retain the received filename and every byte, including metadata. */
+async function verifyInputDownload(page, index, fixture, name = fixture) {
+  const pending = page.waitForEvent("download");
+  await page.locator("#sourceList .tile-source-download").nth(index).click();
+  const download = await pending;
+  check(
+    download.suggestedFilename() === name,
+    `input ${index + 1} retains ${name}`,
+  );
+  const file = path.join(downloads, `${++downloaded}-input-${name}`);
+  await download.saveAs(file);
+  check(
+    fs.readFileSync(file).equals(fs.readFileSync(path.join(fixtures, fixture))),
+    `input ${name} retains its exact bytes and metadata`,
+  );
+}
 /** Converts one fixture as a single-file batch and returns the downloaded file path. */
 async function convertAndDownload(page, fixture, options = {}) {
   const format = options.format || "jpeg";
@@ -873,6 +889,26 @@ async function verifyPreviewPrefix(browser, open) {
       "200x150",
     );
 
+    /** Ensures downloads expose the received JPEG and HEIC without conversion or EXIF removal. */
+    const inputFixtures = ["gps.jpg", ...(realHeic ? ["real.heic"] : [])];
+    await page.locator("#imageFile").setInputFiles(
+      inputFixtures.map((name) => ({
+        name: name === "gps.jpg" ? "IMG_0308.jpg" : name,
+        mimeType: name.endsWith(".jpg") ? "image/jpeg" : "image/heic",
+        buffer: fs.readFileSync(path.join(fixtures, name)),
+      })),
+    );
+    for (const [index, fixture] of inputFixtures.entries())
+      await verifyInputDownload(
+        page,
+        index,
+        fixture,
+        index === 0 ? "IMG_0308.jpg" : fixture,
+      );
+    await page.locator("#keepExif").setChecked(false);
+    await page.locator("#outputFormat").selectOption("png");
+    await verifyInputDownload(page, 0, "gps.jpg", "IMG_0308.jpg");
+
     // Batch behavior: shared settings, selection order, per-file failures and unique names.
     const shared = await convertBatch(
       page,
@@ -939,6 +975,19 @@ async function verifyPreviewPrefix(browser, open) {
       "300x200",
     );
 
+    for (const [index, fixture] of [
+      "photo.jpg",
+      "photo.png",
+      "photo.webp",
+    ].entries())
+      await verifyInputDownload(page, index, fixture);
+    if (screenshotDir) {
+      await page.screenshot({
+        path: path.join(screenshotDir, "image-input-downloads-1440.png"),
+        fullPage: true,
+      });
+    }
+
     // A source that already carries a suffix occupies that output name, so a colliding name
     // must skip past it instead of offering two downloads with the same name.
     fs.copyFileSync(
@@ -978,8 +1027,10 @@ async function verifyPreviewPrefix(browser, open) {
         mixed[2].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
         mixed[1].download === null &&
         mixed[2].download === null,
-      "each rejected file explains itself and offers no download",
+      "each rejected file explains itself and offers no converted download",
     );
+    /** Ensures a failed conversion leaves the received file available for debugging. */
+    await verifyInputDownload(page, 1, "notes.txt");
     const mixedSources = await sourceStates(page);
     // An animated GIF still thumbnails, because the browser renders its first frame even though
     // the converter rejects the file; only a file no decoder can read keeps the placeholder.
@@ -1191,6 +1242,15 @@ async function verifyPreviewPrefix(browser, open) {
     check(
       (await keyboardDownload).suggestedFilename() === "photo.jpg",
       "Enter on a tile download saves that file",
+    );
+
+    /** Ensures input downloads are keyboard accessible independently of output controls. */
+    const keyboardInputDownload = page.waitForEvent("download");
+    await page.locator("#sourceList .tile-source-download").first().focus();
+    await page.keyboard.press("Enter");
+    check(
+      (await keyboardInputDownload).suggestedFilename() === "photo.png",
+      "Enter on an input download retains the source filename",
     );
 
     // An unsupported encoder must fail clearly rather than relabel PNG bytes.
@@ -1536,6 +1596,16 @@ async function verifyPreviewPrefix(browser, open) {
           ),
         ),
       "a long filename wraps inside its tile instead of widening it",
+    );
+    /** Ensures input downloads remain usable and preserve bytes on a narrow screen. */
+    await verifyInputDownload(mobilePage, 1, "alpha.png");
+    check(
+      await mobilePage
+        .locator(".tile-source-download")
+        .evaluateAll((links) =>
+          links.every((link) => link.getBoundingClientRect().height >= 40),
+        ),
+      "input downloads retain a touch-sized target on mobile",
     );
     await mobilePage.locator("#convertBtn").tap();
     await waitBatch(mobilePage, 60000);

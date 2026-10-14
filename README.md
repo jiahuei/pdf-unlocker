@@ -37,6 +37,8 @@ Convert images one at a time or in a batch, with HEIC-to-JPG as the main use cas
 
 Your chosen files and their conversions each appear as a gallery of thumbnails, captioned with the file name, its dimensions and its size; a converted tile adds whether EXIF was kept. Choose a converted thumbnail to preview that result full size above the gallery, then download it. Browsers that cannot display HEIC (Chromium and Firefox) show a placeholder tile for those sources instead of a thumbnail, and their dimensions appear once the file has been converted; Safari thumbnails them directly.
 
+Each input tile has a **Download input** link for debugging, available before conversion and even if conversion fails. It saves the exact file and filename received by the page, including its metadata. An iPhone may have already converted a selected HEIC photo to JPEG before passing it to the browser, so this download may differ from the camera original. Conversion settings do not change input downloads.
+
 A batch is converted in the order you selected, one file at a time, and every file shares the output format, quality and EXIF setting. A file that cannot be converted reports its own reason on its own tile and does not stop the rest; the panel keeps a success and failure count. Files whose names would collide gain a numeric suffix (`photo.jpg`, `photo-2.jpg`). Thumbnails and converted images are held in browser memory until you replace the files, change a setting, choose Start over or leave the page, so very large batches can use a lot of memory on a phone. Choosing new files replaces the current batch and discards its results.
 
 | Input       | To JPG | To PNG | To WebP |
