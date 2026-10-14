@@ -2,10 +2,13 @@
 const el = (id) => document.getElementById(id);
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 const STATUS_TEXT = { ready: "Ready to convert", converting: "Converting…" };
+/** Reports "1447 × 1087 px" for a source or a result, and nothing until the geometry is known. */
+const geometry = (item) =>
+  item.width ? `${item.width} × ${item.height} px` : "";
 // One entry per chosen file, in selection order. Duplicate names stay separate entries, so an
 // entry is identified by itself and its download name is allocated across the whole batch.
-// Each entry also holds the row elements rendered for it, which are updated in place so that
-// activating a row control cannot move the focus away from it.
+// Each entry owns its two gallery tiles and the object URLs behind them, and those tiles are
+// updated in place so that activating a tile control cannot move the focus away from it.
 let entries = [];
 let previewed = null;
 let busy = false;
@@ -58,7 +61,7 @@ function summaryText() {
     ? `Converted ${done} of ${total}, ${plural(failed, "image")} failed`
     : `None of the ${plural(total, "image")} converted`;
 }
-/** Reports the outcome of a finished batch; each row carries its own file's reason. */
+/** Reports the outcome of a finished batch; each tile carries its own file's reason. */
 function batchMessage(total, failed) {
   if (!failed)
     return total === 1
@@ -66,9 +69,9 @@ function batchMessage(total, failed) {
       : [`Your ${total} converted images are ready to download.`, "success"];
   if (failed === total)
     return total === 1
-      ? ["This image could not be converted. Its entry explains why.", "error"]
+      ? ["This image could not be converted. Its tile explains why.", "error"]
       : [
-          `None of the ${total} images could be converted. The list explains why.`,
+          `None of the ${total} images could be converted. Each tile explains why.`,
           "error",
         ];
   return [
@@ -76,62 +79,112 @@ function batchMessage(total, failed) {
     "error",
   ];
 }
-function updateRow(entry) {
+/** Builds the tile chrome both galleries share: a thumbnail frame and a text caption. */
+function tileShell(entry, previewable, onLoad) {
+  const tile = document.createElement("li");
+  tile.className = "tile";
+  // A converted result's thumbnail doubles as its preview control, which keeps one large touch
+  // target instead of a separate button; every other tile stays a plain frame.
+  const frame = document.createElement(previewable ? "button" : "div");
+  frame.className = "tile-frame";
+  if (previewable) {
+    frame.type = "button";
+    frame.addEventListener("click", () => showPreview(entry));
+  }
+  const symbol = document.createElement("span");
+  symbol.className = "tile-symbol";
+  symbol.setAttribute("aria-hidden", "true");
+  symbol.textContent = "▣";
+  const image = document.createElement("img");
+  // The caption names the file, so the thumbnail itself is decorative. Lazy decoding keeps a
+  // large batch from holding every full-size image at once.
+  image.alt = "";
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.addEventListener("load", () => {
+    image.dataset.loaded = "";
+    onLoad?.(image);
+  });
+  const name = document.createElement("p");
+  name.className = "tile-name";
+  name.textContent = entry.file.name;
+  const meta = document.createElement("p");
+  meta.className = "tile-meta";
+  const caption = document.createElement("div");
+  caption.className = "tile-caption";
+  frame.append(symbol, image);
+  caption.append(name, meta);
+  tile.append(frame, caption);
+  return { tile, frame, image, name, meta };
+}
+function sourceTile(entry) {
+  return tileShell(entry, false, (image) => {
+    // Chromium reports oriented geometry for JPEG and PNG but ignores WebP EXIF orientation and
+    // cannot render HEIC at all, so a finished conversion overwrites these numbers with its own.
+    if (entry.result) return;
+    entry.width = image.naturalWidth;
+    entry.height = image.naturalHeight;
+    updateEntry(entry);
+  });
+}
+function resultTile(entry) {
+  const parts = tileShell(entry, true);
+  const download = document.createElement("a");
+  download.className = "tile-button tile-download";
+  download.textContent = "Download";
+  parts.tile.append(download);
+  parts.download = download;
+  return parts;
+}
+/** Renders one entry into both galleries. Filenames and errors are written as text only. */
+function updateEntry(entry) {
+  entry.sourceTile.meta.textContent = [
+    geometry(entry),
+    sizeLabel(entry.file.size),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const { result, error, status } = entry;
-  entry.row.dataset.status = status;
-  entry.row.toggleAttribute("data-preview", previewed === entry);
-  // Filenames and conversion errors are written as text only, so neither can inject markup.
-  entry.meta.textContent = result
-    ? [
-        `${result.name} · ${result.width} × ${result.height} px`,
-        sizeLabel(result.size),
-        result.exif,
-      ]
+  const tile = entry.resultTile;
+  tile.tile.dataset.status = status;
+  tile.tile.toggleAttribute("data-preview", previewed === entry);
+  tile.name.textContent = result ? result.name : entry.file.name;
+  tile.meta.textContent = result
+    ? [geometry(result), sizeLabel(result.size), result.exif]
         .filter(Boolean)
         .join(" · ")
-    : error || [sizeLabel(entry.file.size), STATUS_TEXT[status]].join(" · ");
-  entry.previewBtn.hidden = !result;
-  entry.downloadBtn.hidden = !result;
+    : error || STATUS_TEXT[status];
+  tile.frame.disabled = !result;
+  tile.download.hidden = !result;
   if (!result) {
-    entry.downloadBtn.removeAttribute("href");
-    entry.downloadBtn.removeAttribute("download");
+    tile.image.removeAttribute("src");
+    delete tile.image.dataset.loaded;
+    tile.frame.removeAttribute("aria-label");
+    tile.download.removeAttribute("href");
+    tile.download.removeAttribute("download");
     return;
   }
-  entry.downloadBtn.href = result.url;
-  entry.downloadBtn.download = result.name;
+  // Compared first: reassigning the same blob URL would decode the thumbnail again.
+  if (tile.image.getAttribute("src") !== result.url) {
+    delete tile.image.dataset.loaded;
+    tile.image.src = result.url;
+  }
+  tile.frame.setAttribute("aria-label", `Preview ${result.name}`);
+  tile.download.href = result.url;
+  tile.download.download = result.name;
+}
+function createTiles(entry) {
+  entry.sourceTile = sourceTile(entry);
+  entry.sourceTile.image.src = entry.sourceUrl;
+  entry.resultTile = resultTile(entry);
+  updateEntry(entry);
 }
 function render() {
-  for (const entry of entries) updateRow(entry);
+  for (const entry of entries) updateEntry(entry);
+  el("sourceList").hidden = !entries.length;
   el("batchPanel").hidden = !entries.length;
   el("batchSummary").textContent = summaryText();
   el("convertLabel").textContent = submitLabel();
-}
-function createRow(entry) {
-  const row = document.createElement("li");
-  row.className = "result-row";
-  const text = document.createElement("div");
-  text.className = "result-text";
-  const name = document.createElement("p");
-  name.className = "result-name";
-  name.textContent = entry.file.name;
-  const meta = document.createElement("p");
-  meta.className = "result-meta";
-  const controls = document.createElement("div");
-  controls.className = "result-controls";
-  const previewBtn = document.createElement("button");
-  previewBtn.type = "button";
-  previewBtn.className = "row-button row-preview";
-  previewBtn.textContent = "Preview";
-  previewBtn.addEventListener("click", () => showPreview(entry));
-  const downloadBtn = document.createElement("a");
-  downloadBtn.className = "row-button primary row-download";
-  downloadBtn.textContent = "Download";
-  controls.append(previewBtn, downloadBtn);
-  text.append(name, meta);
-  row.append(text, controls);
-  Object.assign(entry, { row, meta, previewBtn, downloadBtn });
-  updateRow(entry);
-  return row;
 }
 /** Releases every result URL this page owns, so replaced or discarded work cannot leak. */
 function releaseResults() {
@@ -141,6 +194,17 @@ function releaseResults() {
       entry.result = null;
     }
 }
+/**
+ * Source thumbnails belong to the selection rather than to a conversion, so only replacing or
+ * clearing the selection releases them. Hiding the page keeps them: a back/forward-cache restore
+ * would otherwise show empty tiles for files that are still chosen.
+ */
+function releaseSources() {
+  for (const entry of entries) {
+    URL.revokeObjectURL(entry.sourceUrl);
+    entry.sourceUrl = null;
+  }
+}
 function clearPreview() {
   previewed = null;
   el("resultPreview").removeAttribute("src");
@@ -148,8 +212,7 @@ function clearPreview() {
   el("previewEmpty").hidden = false;
   el("previewBadge").textContent = "No conversion yet";
 }
-// One preview panel is shared by the whole batch: decoding every output into its own thumbnail
-// would hold a bitmap per result for as long as the batch is on screen.
+// One large preview is shared by the batch; the tiles carry their own thumbnails.
 function showPreview(entry) {
   previewed = entry;
   el("resultPreview").src = entry.result.url;
@@ -175,13 +238,21 @@ function invalidate() {
 function chooseFiles(files) {
   // Invalidate first: the entries being replaced still own the URLs that have to be released.
   invalidate();
+  releaseSources();
   entries = [...files].map((file) => ({
     file,
     status: "ready",
     error: null,
     result: null,
+    sourceUrl: URL.createObjectURL(file),
   }));
-  el("resultList").replaceChildren(...entries.map(createRow));
+  entries.forEach(createTiles);
+  el("sourceList").replaceChildren(
+    ...entries.map((entry) => entry.sourceTile.tile),
+  );
+  el("resultList").replaceChildren(
+    ...entries.map((entry) => entry.resultTile.tile),
+  );
   el("imageFile").removeAttribute("aria-invalid");
   const total = entries.reduce((sum, entry) => sum + entry.file.size, 0);
   el("fileName").textContent = entries.length
@@ -220,6 +291,10 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
       // Checked before the URL is created: nothing would ever revoke a stale result's URL.
       if (token !== operation) return;
       entry.status = "done";
+      // The output keeps the source geometry, which is also the only geometry this page can
+      // report for a HEIC file: no browser can render one as a thumbnail.
+      entry.width = result.width;
+      entry.height = result.height;
       entry.result = {
         url: URL.createObjectURL(result.blob),
         name: names[index],
@@ -234,7 +309,7 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
           "too-large": "EXIF too large to keep",
         }[result.exif],
       };
-      // The first result is shown without a click; later ones leave the chosen preview alone.
+      // The first result is shown large without a click; later ones leave that choice alone.
       if (!previewed) showPreview(entry);
     } catch (error) {
       if (token !== operation) return;

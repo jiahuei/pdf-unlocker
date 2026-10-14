@@ -56,37 +56,66 @@ function watch(context) {
     return page;
   };
 }
-/** Waits for the running batch to settle: every row reached a final status and the form is idle. */
+/** Waits for the running batch to settle: every tile reached a final status and the form is idle. */
 async function waitBatch(page, timeout = 120000) {
   await page.waitForFunction(
     () => {
-      const rows = [...document.querySelectorAll("#resultList .result-row")];
+      const tiles = [...document.querySelectorAll("#resultList .tile")];
       return (
-        rows.length > 0 &&
+        tiles.length > 0 &&
         !document.getElementById("convertBtn").disabled &&
-        rows.every((row) => ["done", "failed"].includes(row.dataset.status))
+        tiles.every((tile) => ["done", "failed"].includes(tile.dataset.status))
       );
     },
     null,
     { timeout },
   );
 }
-/** Reads every row's source name, status, detail line and offered download name. */
-function rowStates(page) {
-  return page.locator("#resultList .result-row").evaluateAll((rows) =>
-    rows.map((row) => ({
-      name: row.querySelector(".result-name").textContent,
-      status: row.dataset.status,
-      meta: row.querySelector(".result-meta").textContent,
-      download: row.querySelector(".row-download").getAttribute("download"),
+/** Reads every result tile's name, status, detail line, thumbnail state and download name. */
+function tileStates(page) {
+  return page.locator("#resultList .tile").evaluateAll((tiles) =>
+    tiles.map((tile) => ({
+      name: tile.querySelector(".tile-name").textContent,
+      status: tile.dataset.status,
+      meta: tile.querySelector(".tile-meta").textContent,
+      thumbnail: tile
+        .querySelector(".tile-frame img")
+        .hasAttribute("data-loaded"),
+      download: tile.querySelector(".tile-download").getAttribute("download"),
     })),
   );
+}
+/** Reads every input tile's name, detail line and whether the browser could thumbnail it. */
+function sourceStates(page) {
+  return page.locator("#sourceList .tile").evaluateAll((tiles) =>
+    tiles.map((tile) => ({
+      name: tile.querySelector(".tile-name").textContent,
+      meta: tile.querySelector(".tile-meta").textContent,
+      thumbnail: tile
+        .querySelector(".tile-frame img")
+        .hasAttribute("data-loaded"),
+    })),
+  );
+}
+/** Waits until every input thumbnail the browser can render has decoded. */
+function waitThumbnails(page) {
+  return page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll("#sourceList .tile-frame img")].every(
+          (image) => image.complete,
+        ),
+      null,
+      { timeout: 30000 },
+    )
+    .catch(() => {});
 }
 /** Chooses a batch of fixtures, applies the shared settings and waits for the conversion. */
 async function convertBatch(page, fixtureNames, options = {}) {
   await page
     .locator("#imageFile")
     .setInputFiles(fixtureNames.map((name) => path.join(fixtures, name)));
+  await waitThumbnails(page);
   if (options.format)
     await page.locator("#outputFormat").selectOption(options.format);
   if (options.keepExif !== undefined)
@@ -95,20 +124,20 @@ async function convertBatch(page, fixtureNames, options = {}) {
     await page.locator("#quality").fill(String(options.quality));
   await page.locator("#convertBtn").click();
   await waitBatch(page);
-  return rowStates(page);
+  return tileStates(page);
 }
-/** Downloads one row's result, checking the offered name, and returns the saved path. */
-async function downloadRow(page, index, expected) {
+/** Downloads one tile's result, checking the offered name, and returns the saved path. */
+async function downloadTile(page, index, expected) {
   const downloadPromise = page.waitForEvent("download");
   await page
-    .locator("#resultList .result-row")
+    .locator("#resultList .tile")
     .nth(index)
-    .locator(".row-download")
+    .locator(".tile-download")
     .click();
   const download = await downloadPromise;
   check(
     download.suggestedFilename() === expected,
-    `row ${index + 1} offers the download ${expected}`,
+    `tile ${index + 1} offers the download ${expected}`,
   );
   const file = path.join(downloads, `${++downloaded}-${expected}`);
   await download.saveAs(file);
@@ -120,29 +149,30 @@ async function convertAndDownload(page, fixture, options = {}) {
   const extension = { jpeg: "jpg", png: "png", webp: "webp" }[format];
   const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
   // The resolved format is always applied: a previous case may have left another one selected.
-  const [row] = await convertBatch(page, [fixture], { ...options, format });
-  check(row.status === "done", `${fixture} to ${format}: converted`);
+  const [tile] = await convertBatch(page, [fixture], { ...options, format });
+  check(tile.status === "done", `${fixture} to ${format}: converted`);
   check(
-    row.download === expected &&
-      row.meta.startsWith(`${expected} · `) &&
-      row.meta.includes(" px · "),
-    `${fixture} to ${format}: result named ${expected} reporting its geometry: ${row.meta}`,
+    tile.name === expected &&
+      tile.download === expected &&
+      /^\d+ × \d+ px · /.test(tile.meta) &&
+      tile.thumbnail,
+    `${fixture} to ${format}: tile named ${expected} reporting its geometry with a thumbnail: ${tile.meta}`,
   );
   check(
     await page.locator("#resultPreview").isVisible(),
     `${fixture} to ${format}: preview shown`,
   );
-  return downloadRow(page, 0, expected);
+  return downloadTile(page, 0, expected);
 }
 /** Asserts an actionable error is announced and that another attempt stays possible. */
 async function expectFailure(page, fixture, fragment) {
-  const [row] = await convertBatch(page, [fixture], {});
-  check(row.status === "failed", `${fixture}: reported as failed`);
+  const [tile] = await convertBatch(page, [fixture], {});
+  check(tile.status === "failed", `${fixture}: reported as failed`);
   check(
-    row.meta.includes(fragment),
-    `${fixture}: "${row.meta}" explains "${fragment}"`,
+    tile.meta.includes(fragment),
+    `${fixture}: "${tile.meta}" explains "${fragment}"`,
   );
-  check(row.download === null, `${fixture}: no result offered after failure`);
+  check(tile.download === null, `${fixture}: no result offered after failure`);
   check(
     await page.locator("#message.error").isVisible(),
     `${fixture}: the failure is announced`,
@@ -231,11 +261,11 @@ async function holdConvertCalls(page) {
 function settleBatch(page) {
   return page.waitForFunction(
     () => {
-      const rows = [...document.querySelectorAll("#resultList .result-row")];
+      const tiles = [...document.querySelectorAll("#resultList .tile")];
       if (
-        rows.length > 0 &&
+        tiles.length > 0 &&
         !document.getElementById("convertBtn").disabled &&
-        rows.every((row) => ["done", "failed"].includes(row.dataset.status))
+        tiles.every((tile) => ["done", "failed"].includes(tile.dataset.status))
       )
         return true;
       const next = window.pending.shift();
@@ -334,7 +364,7 @@ async function verifyPreviewPrefix(browser, open) {
     await page.locator("#convertBtn").click();
     await waitBatch(page, 60000);
     check(
-      (await rowStates(page))[0].download === "photo.jpg",
+      (await tileStates(page))[0].download === "photo.jpg",
       "conversion works beneath the preview prefix",
     );
     await page.locator(".brand").click();
@@ -636,7 +666,7 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "gps.jpg"),
       );
     check(
-      (await rowStates(page))[0].meta.includes("EXIF kept"),
+      (await tileStates(page))[0].meta.includes("EXIF kept"),
       "the result reports the retained EXIF",
     );
     if (heicFixtures)
@@ -667,7 +697,7 @@ async function verifyPreviewPrefix(browser, open) {
     // A source without EXIF says so instead of quietly claiming to have kept it.
     await convertAndDownload(page, "photo.png", { keepExif: true });
     check(
-      (await rowStates(page))[0].meta.includes("no EXIF in the source"),
+      (await tileStates(page))[0].meta.includes("no EXIF in the source"),
       "a source without EXIF is reported rather than implied",
     );
     check(
@@ -675,7 +705,7 @@ async function verifyPreviewPrefix(browser, open) {
       "a result is shown before the setting changes",
     );
     await page.locator("#keepExif").setChecked(false);
-    const cleared = await rowStates(page);
+    const cleared = await tileStates(page);
     check(
       cleared.length === 1 &&
         cleared[0].status === "ready" &&
@@ -771,13 +801,30 @@ async function verifyPreviewPrefix(browser, open) {
       ["photo.jpg", "photo.png", "photo.webp"],
       { format: "png" },
     );
+    const sources = await sourceStates(page);
     check(
-      shared.map((row) => row.name).join() === "photo.jpg,photo.png,photo.webp",
-      "the batch lists the selected files in order",
+      sources.map((tile) => tile.name).join() ===
+        "photo.jpg,photo.png,photo.webp",
+      "the input gallery lists the selected files in order",
     );
     check(
-      shared.every((row) => row.status === "done"),
-      "one action converts every selected file",
+      sources.map((tile) => tile.meta.split(" · ")[0]).join("|") ===
+        "640 × 400 px|200 × 150 px|300 × 200 px" &&
+        sources.every((tile) => tile.thumbnail),
+      `each input tile thumbnails its own source and reports its geometry: ${sources.map((tile) => tile.meta)}`,
+    );
+    check(
+      sources.every((tile) => / · \d+(\.\d+)? [KM]B$/.test(tile.meta)),
+      "each input tile reports the size of its own source file",
+    );
+    check(
+      shared.every((tile) => tile.status === "done" && tile.thumbnail),
+      "one action converts every selected file into a thumbnailed result",
+    );
+    check(
+      shared.map((tile) => tile.name).join() ===
+        "photo.png,photo-2.png,photo-3.png",
+      "each result tile is named after the file it downloads",
     );
     check(
       (await page.locator("#batchSummary").textContent()) ===
@@ -793,21 +840,21 @@ async function verifyPreviewPrefix(browser, open) {
     // PNG output makes all three names collide, so the batch allocates distinct suffixes while
     // each download keeps the pixels of the source it came from.
     verify(
-      await downloadRow(page, 0, "photo.png"),
+      await downloadTile(page, 0, "photo.png"),
       "--format",
       "PNG",
       "--size",
       "640x400",
     );
     verify(
-      await downloadRow(page, 1, "photo-2.png"),
+      await downloadTile(page, 1, "photo-2.png"),
       "--format",
       "PNG",
       "--size",
       "200x150",
     );
     verify(
-      await downloadRow(page, 2, "photo-3.png"),
+      await downloadTile(page, 2, "photo-3.png"),
       "--format",
       "PNG",
       "--size",
@@ -826,27 +873,27 @@ async function verifyPreviewPrefix(browser, open) {
       { format: "jpeg" },
     );
     check(
-      suffixed.map((row) => row.download).join() ===
+      suffixed.map((tile) => tile.download).join() ===
         "photo-2.jpg,photo.jpg,photo-3.jpg",
-      `allocated names skip a suffix another source already used: ${suffixed.map((row) => row.download)}`,
+      `allocated names skip a suffix another source already used: ${suffixed.map((tile) => tile.download)}`,
     );
     verify(
-      await downloadRow(page, 2, "photo-3.jpg"),
+      await downloadTile(page, 2, "photo-3.jpg"),
       "--format",
       "JPEG",
       "--size",
       "640x400",
     );
 
-    // An invalid file fails on its own row without discarding its valid siblings.
+    // An invalid file fails on its own tile without discarding its valid siblings.
     const mixed = await convertBatch(
       page,
       ["photo.png", "notes.txt", "anim.gif", "alpha.png"],
       { format: "jpeg" },
     );
     check(
-      mixed.map((row) => row.status).join() === "done,failed,failed,done",
-      `valid files around invalid ones still convert: ${mixed.map((row) => row.status)}`,
+      mixed.map((tile) => tile.status).join() === "done,failed,failed,done",
+      `valid files around invalid ones still convert: ${mixed.map((tile) => tile.status)}`,
     );
     check(
       mixed[1].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
@@ -854,6 +901,14 @@ async function verifyPreviewPrefix(browser, open) {
         mixed[1].download === null &&
         mixed[2].download === null,
       "each rejected file explains itself and offers no download",
+    );
+    const mixedSources = await sourceStates(page);
+    // An animated GIF still thumbnails, because the browser renders its first frame even though
+    // the converter rejects the file; only a file no decoder can read keeps the placeholder.
+    check(
+      mixedSources.map((tile) => tile.thumbnail).join() ===
+        "true,false,true,true" && mixedSources[1].meta === "1 KB",
+      `a file the browser cannot render keeps its placeholder and reports only its size: ${mixedSources.map((tile) => tile.meta)}`,
     );
     check(
       (await page.locator("#batchSummary").textContent()) ===
@@ -867,14 +922,14 @@ async function verifyPreviewPrefix(browser, open) {
       "a partially failed batch is announced as an error",
     );
     verify(
-      await downloadRow(page, 0, "photo.jpg"),
+      await downloadTile(page, 0, "photo.jpg"),
       "--format",
       "JPEG",
       "--size",
       "200x150",
     );
     verify(
-      await downloadRow(page, 3, "alpha.jpg"),
+      await downloadTile(page, 3, "alpha.jpg"),
       "--format",
       "JPEG",
       "--size",
@@ -885,7 +940,7 @@ async function verifyPreviewPrefix(browser, open) {
       "30,30,255,127,127",
     );
 
-    // An empty file is reported on its own row instead of blocking the rest of the batch.
+    // An empty file is reported on its own tile instead of blocking the rest of the batch.
     fs.writeFileSync(path.join(fixtures, "empty.png"), "");
     const [empty] = await convertBatch(page, ["empty.png"], {});
     check(
@@ -896,7 +951,7 @@ async function verifyPreviewPrefix(browser, open) {
     // A batch in which nothing converts still explains every file.
     const none = await convertBatch(page, ["notes.txt", "anim.webp"], {});
     check(
-      none.every((row) => row.status === "failed" && row.download === null),
+      none.every((tile) => tile.status === "failed" && tile.download === null),
       "no download is offered when every file fails",
     );
     check(
@@ -918,8 +973,8 @@ async function verifyPreviewPrefix(browser, open) {
         keepExif: false,
       });
       sizes[quality] = [
-        fs.statSync(await downloadRow(page, 0, "photo.jpg")).size,
-        fs.statSync(await downloadRow(page, 1, "photo-2.jpg")).size,
+        fs.statSync(await downloadTile(page, 0, "photo.jpg")).size,
+        fs.statSync(await downloadTile(page, 1, "photo-2.jpg")).size,
       ];
     }
     check(
@@ -931,11 +986,11 @@ async function verifyPreviewPrefix(browser, open) {
       keepExif: true,
     });
     check(
-      (await rowStates(page)).every((row) => row.meta.includes("EXIF kept")),
+      (await tileStates(page)).every((tile) => tile.meta.includes("EXIF kept")),
       "the shared EXIF setting is reported for every file",
     );
     verify(
-      await downloadRow(page, 0, "gps.jpg"),
+      await downloadTile(page, 0, "gps.jpg"),
       "--format",
       "JPEG",
       "--size",
@@ -944,7 +999,7 @@ async function verifyPreviewPrefix(browser, open) {
       path.join(fixtures, "gps.jpg"),
     );
     verify(
-      await downloadRow(page, 1, "gps-marker-fill.jpg"),
+      await downloadTile(page, 1, "gps-marker-fill.jpg"),
       "--format",
       "JPEG",
       "--size",
@@ -958,35 +1013,41 @@ async function verifyPreviewPrefix(browser, open) {
       format: "png",
       keepExif: false,
     });
-    const rows = page.locator("#resultList .result-row");
+    const tiles = page.locator("#resultList .tile");
     check(
       (await page.locator("#resultPreview").getAttribute("alt")).includes(
         "photo.png",
-      ) && (await rows.first().getAttribute("data-preview")) === "",
+      ) && (await tiles.first().getAttribute("data-preview")) === "",
       "the first result is previewed without a click and marked",
     );
-    await rows.nth(1).locator(".row-preview").click();
+    await tiles.nth(1).locator(".tile-frame").click();
     check(
       (await page.locator("#resultPreview").getAttribute("alt")).includes(
         "alpha.png",
       ) &&
-        (await rows.first().getAttribute("data-preview")) === null &&
-        (await rows.nth(1).getAttribute("data-preview")) === "",
+        (await tiles.first().getAttribute("data-preview")) === null &&
+        (await tiles.nth(1).getAttribute("data-preview")) === "",
       "previewing another result moves the single preview panel",
     );
 
     // Drag-and-drop accepts the same batch as the picker, in drop order.
     await dropFiles(page, ["photo.png", "alpha.png"]);
-    const dropped = await rowStates(page);
+    const dropped = await tileStates(page);
     check(
-      dropped.map((row) => row.name).join() === "photo.png,alpha.png" &&
-        dropped.every((row) => row.status === "ready"),
+      dropped.map((tile) => tile.name).join() === "photo.png,alpha.png" &&
+        dropped.every((tile) => tile.status === "ready"),
       "dropping several files replaces the batch in drop order",
+    );
+    check(
+      (await sourceStates(page))
+        .map((tile) => `${tile.name}:${tile.thumbnail}`)
+        .join() === "photo.png:true,alpha.png:true",
+      "dropped files fill the input gallery too",
     );
     await page.locator("#convertBtn").click();
     await waitBatch(page);
     verify(
-      await downloadRow(page, 1, "alpha.png"),
+      await downloadTile(page, 1, "alpha.png"),
       "--format",
       "PNG",
       "--size",
@@ -997,7 +1058,7 @@ async function verifyPreviewPrefix(browser, open) {
       "5,5,0,0,0,0",
     );
 
-    // Choosing a single file keeps the singular wording and one row.
+    // Choosing a single file keeps the singular wording and one tile per gallery.
     await page
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "photo.png"));
@@ -1006,7 +1067,9 @@ async function verifyPreviewPrefix(browser, open) {
         (await page.locator("#convertLabel").textContent()) ===
           "Convert image" &&
         (await page.locator("#batchSummary").textContent()) ===
-          "1 image ready to convert",
+          "1 image ready to convert" &&
+        (await page.locator("#sourceList .tile").count()) === 1 &&
+        (await page.locator("#resultList .tile").count()) === 1,
       "single-file use stays as straightforward as before",
     );
 
@@ -1034,21 +1097,21 @@ async function verifyPreviewPrefix(browser, open) {
     await page.keyboard.press("Enter");
     await waitBatch(page, 60000);
     check(true, "Enter on the focused button converts the batch");
-    const keyboardRows = page.locator("#resultList .result-row");
-    await keyboardRows.nth(1).locator(".row-preview").focus();
+    const keyboardTiles = page.locator("#resultList .tile");
+    await keyboardTiles.nth(1).locator(".tile-frame").focus();
     await page.keyboard.press("Enter");
     check(
       (await page.locator("#resultPreview").getAttribute("alt")).includes(
         "alpha.jpg",
       ),
-      "Enter on a row control previews that result",
+      "Enter on a tile control previews that result",
     );
     const keyboardDownload = page.waitForEvent("download");
-    await keyboardRows.first().locator(".row-download").focus();
+    await keyboardTiles.first().locator(".tile-download").focus();
     await page.keyboard.press("Enter");
     check(
       (await keyboardDownload).suggestedFilename() === "photo.jpg",
-      "Enter on a row download saves that file",
+      "Enter on a tile download saves that file",
     );
 
     // An unsupported encoder must fail clearly rather than relabel PNG bytes.
@@ -1061,12 +1124,13 @@ async function verifyPreviewPrefix(browser, open) {
     await page.locator("#convertBtn").click();
     await waitBatch(page, 30000);
     check(
-      (await rowStates(page))[0].meta.includes("cannot create WebP"),
+      (await tileStates(page))[0].meta.includes("cannot create WebP"),
       "a missing WebP encoder is reported instead of returning PNG bytes",
     );
     await page.close();
 
-    // Object URLs are released on reset, on replacement and when the page is hidden.
+    // Object URLs are released on reset and on replacement. A source thumbnail belongs to the
+    // selection rather than to a conversion, so hiding the page releases only the results.
     const trackedPage = await open();
     await trackObjectURLs(trackedPage);
     await trackedPage.goto(converterURL);
@@ -1078,17 +1142,21 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "photo.png"),
         path.join(fixtures, "photo.jpg"),
       ]);
+    check(
+      (await trackedPage.evaluate(() => window.urls)).created === 2,
+      "one thumbnail URL is created per selected file",
+    );
     await trackedPage.locator("#quality").fill("75");
     await trackedPage.locator("#convertBtn").click();
     await waitBatch(trackedPage, 60000);
     check(
-      (await trackedPage.evaluate(() => window.urls)).created === 2,
-      "one image object URL is created per converted file",
+      (await trackedPage.evaluate(() => window.urls)).created === 4,
+      "one result URL is created per converted file",
     );
     await trackedPage.locator("#resetBtn").click();
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === 2,
-      "reset revokes every result URL of the batch",
+      (await trackedPage.evaluate(() => window.urls)).revoked === 4,
+      "reset revokes every thumbnail and result URL of the batch",
     );
     check(
       (await trackedPage.locator("#fileName").textContent()) ===
@@ -1104,34 +1172,37 @@ async function verifyPreviewPrefix(browser, open) {
     );
     check(
       (await trackedPage.locator("#batchPanel").isHidden()) &&
-        (await trackedPage.locator("#resultList .result-row").count()) === 0 &&
+        (await trackedPage.locator("#resultList .tile").count()) === 0 &&
+        (await trackedPage.locator("#sourceList").isHidden()) &&
+        (await trackedPage.locator("#sourceList .tile").count()) === 0 &&
         (await trackedPage.locator("#resultPreview").getAttribute("src")) ===
           null,
-      "reset clears the stale rows and their preview source",
+      "reset clears both galleries and the preview source",
     );
-    await convertBatch(trackedPage, ["photo.jpg", "photo.png"], {
-      keepExif: false,
-    });
-    // Replacing the selection discards a finished batch before the next one is converted.
+    await convertBatch(trackedPage, ["photo.jpg"], { keepExif: false });
+    // Replacing the selection discards a finished result and its thumbnail together.
     await trackedPage
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "alpha.png"));
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === 4,
+      (await trackedPage.evaluate(() => window.urls)).created === 7 &&
+        (await trackedPage.evaluate(() => window.urls)).revoked === 6,
       "replacing a batch releases every URL it owned",
     );
-    await convertBatch(trackedPage, ["alpha.png"], { keepExif: false });
+    await trackedPage.locator("#convertBtn").click();
+    await waitBatch(trackedPage, 60000);
     const urls = await trackedPage.evaluate(() => window.urls);
     check(
-      urls.created === 5 && urls.revoked === 4,
-      `only the current batch keeps a live URL: ${JSON.stringify(urls)}`,
+      urls.created === 8 && urls.revoked === 6,
+      `only the current thumbnail and result stay live: ${JSON.stringify(urls)}`,
     );
     await trackedPage.evaluate(() =>
       window.dispatchEvent(new PageTransitionEvent("pagehide")),
     );
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === urls.created,
-      "leaving the page releases the remaining result URL",
+      (await trackedPage.evaluate(() => window.urls)).revoked === 7 &&
+        (await trackedPage.locator("#sourceList .tile").count()) === 1,
+      "leaving the page releases the result but keeps the chosen file's thumbnail",
     );
     await trackedPage.close();
 
@@ -1149,7 +1220,7 @@ async function verifyPreviewPrefix(browser, open) {
       ]);
     await heldPage.locator("#convertBtn").click();
     await heldPage
-      .locator('.result-row[data-status="converting"]')
+      .locator('.tile[data-status="converting"]')
       .waitFor({ timeout: 30000 });
     check(
       (await heldPage.locator("#batchSummary").textContent()) ===
@@ -1160,7 +1231,7 @@ async function verifyPreviewPrefix(browser, open) {
     // A setting change discards the pending batch; resubmitting queues behind the active call.
     await heldPage.locator("#quality").fill("55");
     check(
-      (await rowStates(heldPage)).every((row) => row.status === "ready"),
+      (await tileStates(heldPage)).every((tile) => tile.status === "ready"),
       "a setting change clears the statuses of the batch it invalidates",
     );
     await heldPage.locator("#convertBtn").click();
@@ -1175,9 +1246,9 @@ async function verifyPreviewPrefix(browser, open) {
       `the stale batch stops after the file it was already converting: ${held.files}`,
     );
     check(
-      (await rowStates(heldPage)).map((row) => row.status).join() ===
+      (await tileStates(heldPage)).map((tile) => tile.status).join() ===
         "done,done" &&
-        (await heldPage.evaluate(() => window.urls)).created === 2,
+        (await heldPage.evaluate(() => window.urls)).created === 4,
       "only the resubmitted batch produces results",
     );
     // Reset during a pending conversion discards the late result instead of showing it.
@@ -1187,7 +1258,7 @@ async function verifyPreviewPrefix(browser, open) {
       .setInputFiles(path.join(fixtures, "photo.png"));
     await heldPage.locator("#convertBtn").click();
     await heldPage
-      .locator('.result-row[data-status="converting"]')
+      .locator('.tile[data-status="converting"]')
       .waitFor({ timeout: 30000 });
     await heldPage.locator("#resetBtn").click();
     check(
@@ -1201,8 +1272,8 @@ async function verifyPreviewPrefix(browser, open) {
     check(
       (await heldPage.locator("#batchPanel").isHidden()) &&
         (await heldPage.evaluate(() => window.calls)).total === 4 &&
-        heldUrls.created === 2 &&
-        heldUrls.revoked === 2,
+        heldUrls.created === 5 &&
+        heldUrls.revoked === 5,
       `a discarded conversion creates no result and leaks no URL: ${JSON.stringify(heldUrls)}`,
     );
     await heldPage.close();
@@ -1235,12 +1306,15 @@ async function verifyPreviewPrefix(browser, open) {
         .setInputFiles(path.join(fixtures, "photo.png"));
       // PNG output names the result photo.png, so a resurfacing photo.heic result is visible.
       await racedPage.locator("#outputFormat").selectOption("png");
+      const thumbnailsBefore = await racedPage.evaluate(
+        () => window.urls.created,
+      );
       await racedPage.locator("#convertBtn").click();
       const pending = racedPage.waitForResponse(decoderURL, { timeout: 60000 });
       releaseDecoder();
       await pending;
       await waitBatch(racedPage, 60000);
-      const raced = await rowStates(racedPage);
+      const raced = await tileStates(racedPage);
       check(
         raced.length === 1 && raced[0].download === "photo.png",
         "the replaced batch is the one shown",
@@ -1252,13 +1326,14 @@ async function verifyPreviewPrefix(browser, open) {
         `the queued batch waits for the HEIC decoder and the stale one stops: ${JSON.stringify(racedCalls)}`,
       );
       check(
-        (await racedPage.evaluate(() => window.urls)).created === 1,
+        (await racedPage.evaluate(() => window.urls)).created ===
+          thumbnailsBefore + 1,
         "the discarded HEIC conversion creates no result URL",
       );
       // Give the discarded HEIC conversion time to finish after the replacement.
       await racedPage.waitForTimeout(4000);
       check(
-        (await rowStates(racedPage))[0].download === "photo.png",
+        (await tileStates(racedPage))[0].download === "photo.png",
         "a conversion started before the replacement stays discarded",
       );
       await racedPage.close();
@@ -1267,14 +1342,33 @@ async function verifyPreviewPrefix(browser, open) {
       const heicPage = await open();
       await heicPage.goto(converterURL);
       await trackConvertCalls(heicPage);
-      const heicBatch = await convertBatch(
-        heicPage,
-        ["photo.heic", "gps.heic", "untagged.heic"],
-        { format: "jpeg", keepExif: true },
+      await heicPage
+        .locator("#imageFile")
+        .setInputFiles(
+          ["photo.heic", "gps.heic", "untagged.heic"].map((name) =>
+            path.join(fixtures, name),
+          ),
+        );
+      await waitThumbnails(heicPage);
+      check(
+        (await sourceStates(heicPage)).every(
+          (tile) => !tile.thumbnail && !tile.meta.includes("px"),
+        ),
+        "a HEIC source this browser cannot render keeps its placeholder and reports only its size",
+      );
+      await heicPage.locator("#keepExif").setChecked(true);
+      await heicPage.locator("#convertBtn").click();
+      await waitBatch(heicPage);
+      const heicBatch = await tileStates(heicPage);
+      check(
+        heicBatch.every((tile) => tile.status === "done" && tile.thumbnail),
+        "a batch of HEIC photos converts through the shared decoder",
       );
       check(
-        heicBatch.every((row) => row.status === "done"),
-        "a batch of HEIC photos converts through the shared decoder",
+        (await sourceStates(heicPage)).every((tile) =>
+          /^640 × 400 px · \d+(\.\d+)? [KM]B$/.test(tile.meta),
+        ),
+        "the conversion gives a HEIC input tile the geometry its browser could not report",
       );
       const heicCalls = await heicPage.evaluate(() => window.calls);
       check(
@@ -1282,7 +1376,7 @@ async function verifyPreviewPrefix(browser, open) {
         `repeated HEIC conversions never overlap: ${JSON.stringify(heicCalls)}`,
       );
       verify(
-        await downloadRow(heicPage, 1, "gps.jpg"),
+        await downloadTile(heicPage, 1, "gps.jpg"),
         "--format",
         "JPEG",
         "--size",
@@ -1330,7 +1424,7 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await mobilePage.goto(converterURL);
     await noOverflow(mobilePage, 375);
-    // A long filename must wrap inside its row instead of widening the page.
+    // A long filename must wrap inside its tile instead of widening the page.
     const longName = `${"holiday-photo-".repeat(9)}1.png`;
     fs.copyFileSync(
       path.join(fixtures, "photo.png"),
@@ -1344,21 +1438,39 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "photo.jpg"),
       ]);
     await noOverflow(mobilePage, 375);
+    await waitThumbnails(mobilePage);
     check(
       (await mobilePage.locator("#convertLabel").textContent()) ===
-        "Convert 3 images",
-      "a batch is announced as such on a narrow screen",
+        "Convert 3 images" &&
+        (await mobilePage.locator("#sourceList .tile").count()) === 3,
+      "a batch is announced as such and thumbnailed on a narrow screen",
+    );
+    check(
+      await mobilePage
+        .locator(".tile")
+        .evaluateAll((tiles) =>
+          tiles.every(
+            (tile) =>
+              tile.scrollWidth <= tile.clientWidth + 1 &&
+              tile.querySelector(".tile-name").scrollWidth <=
+                tile.querySelector(".tile-name").clientWidth + 1,
+          ),
+        ),
+      "a long filename wraps inside its tile instead of widening it",
     );
     await mobilePage.locator("#convertBtn").tap();
     await waitBatch(mobilePage, 60000);
     await noOverflow(mobilePage, 375);
     check(
-      await mobilePage
-        .locator("#resultList .result-row")
-        .first()
-        .locator(".row-download")
-        .isVisible(),
-      "each result keeps its own download control on a narrow screen",
+      (await tileStates(mobilePage)).every(
+        (tile) => tile.status === "done" && tile.thumbnail,
+      ) &&
+        (await mobilePage
+          .locator("#resultList .tile")
+          .first()
+          .locator(".tile-download")
+          .isVisible()),
+      "every result keeps its thumbnail and download control on a narrow screen",
     );
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });

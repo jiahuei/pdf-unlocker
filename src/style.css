@@ -661,83 +661,121 @@ code {
   font-weight: 650;
   margin-bottom: 12px;
 }
-.result-list {
+.tile-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
-  margin: 0;
+  margin: 14px 0 0;
   padding: 0;
   list-style: none;
 }
-.result-row {
+#batchPanel .tile-grid {
+  margin-top: 0;
+}
+.tile {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
-  padding: 12px 14px;
+  flex-direction: column;
   background: white;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;
 }
-.result-row[data-status="converting"] {
-  border-left-color: var(--accent);
+.tile[data-status="converting"] {
+  border-color: var(--accent);
 }
-.result-row[data-status="converting"] .result-meta {
+.tile[data-status="converting"] .tile-meta {
   color: var(--accent);
 }
-.result-row[data-status="done"] {
-  border-left-color: #347c5e;
+.tile[data-status="done"] {
+  border-color: #a8c9b8;
 }
-.result-row[data-status="failed"] {
-  border-left-color: #c0553a;
+.tile[data-status="failed"] {
+  border-color: #dfb3a5;
   background: #fffbf9;
 }
-.result-row[data-status="failed"] .result-meta {
+.tile[data-status="failed"] .tile-meta {
   color: #9a442e;
 }
-.result-row[data-preview] {
-  /* A ring rather than a border colour, so the status colour on the left edge survives. */
-  box-shadow: 0 0 0 1px var(--accent);
+.tile[data-preview] {
+  /* A ring rather than a border colour, so the status colour survives. */
+  box-shadow: 0 0 0 2px var(--accent);
 }
-.result-text {
-  flex: 1 1 180px;
-  min-width: 0;
+.tile-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  color: #8694b9;
+  background: repeating-linear-gradient(
+    45deg,
+    #f6f7fb,
+    #f6f7fb 8px,
+    #f9faff 8px,
+    #f9faff 16px
+  );
 }
-.result-row .result-name {
-  font-size: 0.8rem;
+/* The frame is a preview button only for a converted result; a pending tile keeps full contrast. */
+.tile-frame:disabled {
+  opacity: 1;
+}
+.tile-frame img {
+  /* Absolute, so the thumbnail fills the fixed-ratio frame instead of keeping the source's own
+     aspect ratio, and so the placeholder behind it stays centred. */
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: white;
+  /* Transparent until decoded, so the placeholder shows through and a source the browser cannot
+     render cannot flash a missing-image glyph. Unlike `hidden`, this keeps a layout box, which
+     lazy loading needs in order to decide the thumbnail is near the viewport. */
+  opacity: 0;
+}
+.tile-frame img[data-loaded] {
+  opacity: 1;
+}
+.tile-symbol {
+  font-size: 30px;
+}
+.tile-caption {
+  padding: 8px 10px;
+}
+.tile-name {
+  font-size: 0.72rem;
   font-weight: 650;
   overflow-wrap: anywhere;
-  margin-bottom: 4px;
-}
-.result-row .result-meta {
   margin: 0;
 }
-.result-controls {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
+.tile-meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
 }
-.row-button {
+.tile-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  /* Matches the 40px touch target the PDF tool's icon buttons already use. */
   min-height: 40px;
-  padding: 8px 14px;
+  margin: 0 10px 10px;
+  padding: 6px 10px;
   border: 1px solid var(--accent);
   border-radius: 8px;
-  background: white;
-  color: var(--accent);
-  font-size: 0.75rem;
+  background: var(--accent);
+  color: white;
+  font-size: 0.72rem;
   font-weight: 650;
   text-decoration: none;
 }
-.row-button:hover {
+.tile-button:hover {
   border-color: var(--accent-dark);
-}
-.row-button.primary {
-  background: var(--accent);
-  color: white;
-}
-.row-button.primary:hover {
   background: var(--accent-dark);
   color: white;
 }
