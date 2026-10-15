@@ -122,6 +122,8 @@ Canvas encoders write pixels only. Source metadata is dropped unless the user op
 
 ### UI state and cleanup
 
+The supported-conversion notes sit below the format table, outside its card, and span the full section width so long explanations do not lengthen a narrow desktop column.
+
 `image-app.js` owns DOM state while `image-converter.js` owns decoding and encoding. The picker and the drop zone both accept several files; a new selection replaces the current batch. Each selected file is one ordered entry holding its status, error, result and the object URLs it owns. Entries are rendered in two galleries of tiles, an input gallery of the chosen sources and an output gallery of their conversions, and both tiles of an entry are updated in place so activating a tile control cannot move the focus. Duplicate source names stay separate entries, and `outputNames()` allocates their download names across the batch with deterministic numeric suffixes.
 
 Each tile captions its image with the file name plus geometry and size, and the output tile adds the EXIF outcome. Thumbnails are `<img>` elements over the owned blob URLs with lazy, asynchronous decoding, so a large batch does not hold every full-size image at once; a tile the browser cannot render keeps its placeholder. Source geometry comes from the thumbnail's intrinsic dimensions, and a finished conversion overwrites them with its own, because Chromium ignores WebP EXIF orientation there and cannot render HEIC at all. A converted tile's thumbnail is also its preview button, and it drives the one large preview panel the batch shares.

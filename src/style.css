@@ -843,7 +843,8 @@ code {
   font-weight: 650;
 }
 .notes-list {
-  margin: 18px 0 0;
+  grid-column: 1 / -1;
+  margin: 0;
   padding-left: 18px;
   color: var(--muted);
   font-size: 0.76rem;

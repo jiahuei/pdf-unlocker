@@ -237,50 +237,50 @@
               </tr>
             </tbody>
           </table>
-          <ul class="notes-list">
-            <li>
-              HEIC input covers HEVC-encoded photos, which is what iPhone and
-              recent Android cameras write. AVIF and animated HEIF files are not
-              supported. Layered HEIF encodings are also unsupported and report
-              a separate explanation.
-            </li>
-            <li>
-              Orientation and supported colour profiles are applied before
-              export to sRGB. Source colour profiles are not copied. Unsupported
-              HEIC colour spaces, including grayscale ICC profiles and HDR, are
-              rejected.
-            </li>
-            <li>
-              EXIF, including the GPS position, is dropped unless you select
-              <strong>Keep location and shooting details</strong>. If the
-              original image contains orientation metadata, the converter uses
-              it to rotate or mirror the image. XMP is never copied.
-            </li>
-            <li>
-              Transparent pixels are placed on white for JPEG output. PNG and
-              WebP keep transparency.
-            </li>
-            <li>
-              Animated GIF, APNG, WebP and HEIF image sequences are rejected.
-              Supported still HEIF collections and JPEG/MPO files convert only
-              their first image, with a message on the result tile saying so.
-            </li>
-            <li>
-              Limits are 40 MB per file and 50 megapixels decoded. Very large
-              images can also reach your browser's own canvas limit.
-            </li>
-            <li>
-              A batch is converted one file at a time, in the order you chose. A
-              file that cannot be converted fails on its own and does not stop
-              the rest. Converted images are kept in your browser's memory until
-              you replace them or leave the page.
-            </li>
-            <li>
-              WebP output needs browser support; the option is disabled where
-              your browser cannot write WebP.
-            </li>
-          </ul>
         </div>
+        <ul class="notes-list">
+          <li>
+            HEIC input covers HEVC-encoded photos, which is what iPhone and
+            recent Android cameras write. AVIF and animated HEIF files are not
+            supported. Layered HEIF encodings are also unsupported and report a
+            separate explanation.
+          </li>
+          <li>
+            Orientation and supported colour profiles are applied before export
+            to sRGB. Source colour profiles are not copied. Unsupported HEIC
+            colour spaces, including grayscale ICC profiles and HDR, are
+            rejected.
+          </li>
+          <li>
+            EXIF, including the GPS position, is dropped unless you select
+            <strong>Keep location and shooting details</strong>. If the original
+            image contains orientation metadata, the converter uses it to rotate
+            or mirror the image. XMP is never copied.
+          </li>
+          <li>
+            Transparent pixels are placed on white for JPEG output. PNG and WebP
+            keep transparency.
+          </li>
+          <li>
+            Animated GIF, APNG, WebP and HEIF image sequences are rejected.
+            Supported still HEIF collections and JPEG/MPO files convert only
+            their first image, with a message on the result tile saying so.
+          </li>
+          <li>
+            Limits are 40 MB per file and 50 megapixels decoded. Very large
+            images can also reach your browser's own canvas limit.
+          </li>
+          <li>
+            A batch is converted one file at a time, in the order you chose. A
+            file that cannot be converted fails on its own and does not stop the
+            rest. Converted images are kept in your browser's memory until you
+            replace them or leave the page.
+          </li>
+          <li>
+            WebP output needs browser support; the option is disabled where your
+            browser cannot write WebP.
+          </li>
+        </ul>
       </section>
       <section class="how-section" aria-labelledby="how-title">
         <div>
