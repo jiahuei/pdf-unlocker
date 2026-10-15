@@ -241,7 +241,8 @@
             <li>
               HEIC input covers HEVC-encoded photos, which is what iPhone and
               recent Android cameras write. AVIF and animated HEIF files are not
-              supported.
+              supported. Layered HEIF encodings are also unsupported and report
+              a separate explanation.
             </li>
             <li>
               Orientation and supported colour profiles are applied before
@@ -260,10 +261,9 @@
               WebP keep transparency.
             </li>
             <li>
-              Animated GIF, APNG, WebP and sequence-branded HEIF files are
-              rejected. Supported still HEIF collections and JPEG/MPO files
-              convert only their first image, with a message on the result tile
-              saying so.
+              Animated GIF, APNG, WebP and HEIF image sequences are rejected.
+              Supported still HEIF collections and JPEG/MPO files convert only
+              their first image, with a message on the result tile saying so.
             </li>
             <li>
               Limits are 40 MB per file and 50 megapixels decoded. Very large

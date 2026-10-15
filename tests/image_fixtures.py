@@ -67,6 +67,21 @@ def write_heif_fixtures(directory):
         return
     pillow_heif.register_heif_opener()
     gradient((640, 400), (255, 0, 0)).save(directory / "photo.heic", quality=90)
+    # Match the LOC still's mif1 major plus mif1/heic/hevc compatible brands. Editing
+    # existing slots preserves item offsets; the hevc compatibility must not imply animation.
+    compatible = bytearray((directory / "photo.heic").read_bytes())
+    assert compatible[4:8] == b"ftyp" and int.from_bytes(compatible[:4], "big") >= 28
+    compatible[8:12] = b"mif1"
+    compatible[16:28] = b"mif1heichevc"
+    (directory / "still-compatible.heic").write_bytes(compatible)
+    with (
+        Image.open(directory / "photo.heic") as original,
+        Image.open(directory / "still-compatible.heic") as modified,
+    ):
+        assert modified.size == original.size and modified.mode == original.mode
+        assert modified.tobytes() == original.tobytes(), (
+            "brand edits must preserve pixels"
+        )
     # A camera photo carries its EXIF in a separate HEIF item, which only the decoder can read.
     gradient((640, 400), (255, 0, 0)).save(
         directory / "gps.heic", quality=90, exif=gps_exif(size=(640, 400))
@@ -281,8 +296,16 @@ def write_fixtures(directory):
     (directory / "anim-hevc.heic").write_bytes(
         struct.pack(">I4s4sI", 16, b"ftyp", b"hevc", 0)
     )
-    (directory / "anim-compatible.heic").write_bytes(
-        struct.pack(">I4s4sI4s", 20, b"ftyp", b"heic", 0, b"msf1")
+    # Match the Nokia sequence and layered-still brands without embedding their image data.
+    (directory / "anim-msf1.heic").write_bytes(
+        struct.pack(">I4s4sI", 36, b"ftyp", b"msf1", 0) + b"msf1hevcheicmif1iso8"
+    )
+    (directory / "layered-heis.heic").write_bytes(
+        struct.pack(">I4s4sI", 28, b"ftyp", b"heis", 0) + b"mif1heicheis"
+    )
+    # The major brand is recognizable even though the declared box extends past EOF.
+    (directory / "truncated-ftyp.heic").write_bytes(
+        struct.pack(">I4s4sI", 28, b"ftyp", b"heic", 0)
     )
     (directory / "corrupt.heic").write_bytes(b"\x00\x00\x00\x18ftypheic" + bytes(64))
     write_heif_fixtures(directory)

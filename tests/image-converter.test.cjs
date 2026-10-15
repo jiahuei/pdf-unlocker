@@ -8,7 +8,7 @@ const {
   MAX_FILE_BYTES,
   MAX_PIXELS,
   OUTPUTS,
-  animatedFormat,
+  rejectedContainer,
   convert,
   detectFormat,
   embedExif,
@@ -447,24 +447,22 @@ test("refuses formats outside the matrix", () => {
     assert.equal(detectFormat(bytes), null, String(bytes));
 });
 
-/** Ensures HEIF sequences and unsupported layered variants are rejected before invoking the decoder. */
-test("rejects major and compatible unsupported HEIF brands before decoding", async () => {
-  for (const brand of [
-    "heim",
-    "heis",
-    "hevc",
-    "hevx",
-    "hevm",
-    "hevs",
-    "msf1",
+/** Ensures known major brands control rejection, with separate errors for sequences and layered stills. */
+test("rejects HEIF sequence and layered majors before decoding", async () => {
+  for (const [brand, code] of [
+    ...["hevc", "hevx", "hevm", "hevs", "msf1"].map((brand) => [
+      brand,
+      "animated",
+    ]),
+    ...["heim", "heis"].map((brand) => [brand, "layered"]),
   ]) {
     for (const bytes of [
       heif(brand),
-      heif("heic", brand),
+      heif(brand, "mif1", "heic"),
       heif("isom", brand),
     ]) {
       assert.equal(detectFormat(bytes), "heif", brand);
-      assert.equal(animatedFormat(bytes, "heif"), "heif", brand);
+      assert.equal(rejectedContainer(bytes, "heif"), code, brand);
       let codecRequested = false;
       await assert.rejects(
         convert(new Blob([bytes]), OUTPUTS[0], 0.8, {
@@ -473,36 +471,107 @@ test("rejects major and compatible unsupported HEIF brands before decoding", asy
           },
         }),
         {
-          code: "animated",
+          code,
           message:
-            "Animated images are not supported. Choose a single still image.",
+            code === "animated"
+              ? "Animated images are not supported. Choose a single still image."
+              : "This HEIF file uses layered (L-HEVC) encoding, which is not supported. Export a single-layer HEIC and try again.",
         },
       );
       assert.equal(
         codecRequested,
         false,
-        "sequence rejection must not load the decoder",
+        "container rejection must not load the decoder",
       );
     }
   }
 });
 
-/** Ensures compatible still brands remain supported and non-brand bytes cannot imply animation. */
-test("distinguishes still HEIF collections from sequences within the ftyp box", () => {
-  for (const brand of ["heic", "heix", "mif1", "heif"]) {
-    for (const bytes of [heif(brand), heif("isom", brand)]) {
-      assert.equal(detectFormat(bytes), "heif", brand);
-      assert.equal(animatedFormat(bytes, "heif"), null, brand);
+/** Ensures sequence compatibility cannot misclassify documented stills or depend on list order. */
+test("gives supported still major brands precedence over compatible profiles", () => {
+  for (const major of ["heic", "heix", "mif1", "heif"]) {
+    for (const compatible of [
+      [],
+      ["mif1", "heic", "hevc"],
+      ["msf1"],
+      ["heim", "heis"],
+    ]) {
+      const bytes = heif(major, ...compatible);
+      assert.equal(detectFormat(bytes), "heif");
+      assert.equal(
+        rejectedContainer(bytes, "heif"),
+        null,
+        `${major}: ${compatible}`,
+      );
     }
   }
-  const minorVersion = heif("heic");
-  minorVersion.set(text("msf1"), 12);
-  assert.equal(animatedFormat(minorVersion, "heif"), null);
-  const afterBox = Uint8Array.from([...heif("heic"), ...text("msf1")]);
-  assert.equal(animatedFormat(afterBox, "heif"), null);
-  const truncated = heif("isom", "msf1").subarray(0, 19);
-  assert.equal(detectFormat(truncated), null);
-  assert.equal(animatedFormat(truncated, "heif"), null);
+  // For an unknown major, a supported still profile wins regardless of compatible-brand order.
+  for (const compatible of [
+    ["heic", "hevc"],
+    ["hevc", "heic"],
+    ["heis", "mif1"],
+  ]) {
+    const bytes = heif("isom", ...compatible);
+    assert.equal(detectFormat(bytes), "heif");
+    assert.equal(rejectedContainer(bytes, "heif"), null);
+  }
+});
+
+/** Ensures box sizes and offsets exclude minor-version and sibling bytes from brand classification. */
+test("reads ordinary, to-EOF and 64-bit HEIF ftyp boxes", () => {
+  for (const [major, rejection] of [
+    ["heic", null],
+    ["hevc", "animated"],
+    ["heis", "layered"],
+  ]) {
+    const ordinary = heif(major, "mif1", "heic");
+    const toEnd = ordinary.slice();
+    toEnd.set(uint32BE(0), 0);
+    const extended = Uint8Array.from([
+      ...uint32BE(1),
+      ...text("ftyp"),
+      ...uint32BE(0),
+      ...uint32BE(ordinary.length + 8),
+      ...ordinary.subarray(8),
+    ]);
+    for (const bytes of [ordinary, toEnd, extended]) {
+      assert.equal(detectFormat(bytes), "heif");
+      assert.equal(rejectedContainer(bytes, "heif"), rejection);
+    }
+  }
+  const minorVersion = heif("isom", "heic");
+  minorVersion.set(text("avif"), 12);
+  assert.equal(detectFormat(minorVersion), "heif");
+  assert.equal(rejectedContainer(minorVersion, "heif"), null);
+  const afterBox = Uint8Array.from([...heif("isom", "heic"), ...text("avif")]);
+  assert.equal(detectFormat(afterBox), "heif");
+  assert.equal(rejectedContainer(afterBox, "heif"), null);
+});
+
+/** Ensures a readable HEIF major survives truncation, while incomplete headers cannot invent brands. */
+test("retains recognizable truncated HEIF headers for decoder errors", () => {
+  const ordinary = heif("heic", "msf1").subarray(0, 19);
+  assert.equal(detectFormat(ordinary), "heif");
+  assert.equal(rejectedContainer(ordinary, "heif"), null);
+  const unknownMajor = heif("isom", "msf1").subarray(0, 19);
+  assert.equal(detectFormat(unknownMajor), null);
+  assert.equal(rejectedContainer(unknownMajor, "heif"), null);
+  const extended = Uint8Array.from([
+    ...uint32BE(1),
+    ...text("ftyp"),
+    ...uint32BE(0),
+    ...uint32BE(24),
+    ...text("heic"),
+  ]);
+  assert.equal(detectFormat(extended), "heif");
+  assert.equal(detectFormat(extended.subarray(0, 12)), null);
+  assert.equal(detectFormat(extended.subarray(0, 19)), null);
+  // A size beyond the JS exact-integer range still bounds the scan to available bytes.
+  extended.set(uint32BE(0x200000), 8);
+  assert.equal(detectFormat(extended), "heif");
+  extended.set(uint32BE(0), 8);
+  extended.set(uint32BE(16), 12);
+  assert.equal(detectFormat(extended), null);
 });
 
 /**
@@ -511,43 +580,43 @@ test("distinguishes still HEIF collections from sequences within the ftyp box", 
  */
 test("detects animated PNG and WebP inputs", () => {
   assert.equal(
-    animatedFormat(
+    rejectedContainer(
       png(ihdr, pngChunk("acTL", [0, 0, 0, 2, 0, 0, 0, 0])),
       "png",
     ),
-    "png",
+    "animated",
   );
   assert.equal(
-    animatedFormat(
+    rejectedContainer(
       webp(vp8x, webpChunk("ANIM", new Array(6).fill(0)), webpChunk("ANMF")),
       "webp",
     ),
-    "webp",
+    "animated",
   );
   // A trailing acTL is not animation, and neither is a still VP8 or VP8L payload.
   assert.equal(
-    animatedFormat(png(ihdr, pngChunk("IDAT"), pngChunk("acTL")), "png"),
+    rejectedContainer(png(ihdr, pngChunk("IDAT"), pngChunk("acTL")), "png"),
     null,
   );
-  assert.equal(animatedFormat(webp(vp8x, webpChunk("VP8 ")), "webp"), null);
-  assert.equal(animatedFormat(webp(vp8x, webpChunk("VP8L")), "webp"), null);
-  assert.equal(animatedFormat(jpeg, "jpeg"), null);
-  assert.equal(animatedFormat(png(ihdr), "png"), null);
+  assert.equal(rejectedContainer(webp(vp8x, webpChunk("VP8 ")), "webp"), null);
+  assert.equal(rejectedContainer(webp(vp8x, webpChunk("VP8L")), "webp"), null);
+  assert.equal(rejectedContainer(jpeg, "jpeg"), null);
+  assert.equal(rejectedContainer(png(ihdr), "png"), null);
 });
 
 /** Ensures valid unknown FourCC chunks cannot hide animation, including odd-length padding. */
 test("detects WebP animation after unknown chunks", () => {
   for (const type of ["test", "x!  "])
     assert.equal(
-      animatedFormat(
+      rejectedContainer(
         webp(vp8x, webpChunk(type, [1, 2, 3]), webpChunk("ANMF")),
         "webp",
       ),
-      "webp",
+      "animated",
       type,
     );
   assert.equal(
-    animatedFormat(webp(webpChunk("test", text("ANMF"))), "webp"),
+    rejectedContainer(webp(webpChunk("test", text("ANMF"))), "webp"),
     null,
   );
 });

@@ -857,22 +857,27 @@ async function verifyPreviewPrefix(browser, open) {
       "notes.txt",
       "Choose a HEIC, JPEG, PNG or WebP image",
     );
-    /** Ensures HEIF sequence brands fail before loading the decoder, even as compatible brands. */
+    /** Ensures sequence and layered major brands fail with distinct reasons before decoder loading. */
     const sequencePage = await open();
     let sequenceDecoderRequests = 0;
     sequencePage.on("request", (request) => {
       if (decoderURL.test(request.url())) sequenceDecoderRequests++;
     });
     await sequencePage.goto(converterURL);
-    for (const fixture of ["anim-hevc.heic", "anim-compatible.heic"])
+    for (const fixture of ["anim-hevc.heic", "anim-msf1.heic"])
       await expectFailure(
         sequencePage,
         fixture,
         "Animated images are not supported",
       );
+    await expectFailure(
+      sequencePage,
+      "layered-heis.heic",
+      "uses layered (L-HEVC) encoding",
+    );
     check(
       sequenceDecoderRequests === 0,
-      "rejected HEIF sequences never load the decoder",
+      "rejected HEIF sequences and layered stills never load the decoder",
     );
     await sequencePage.close();
 
@@ -945,6 +950,17 @@ async function verifyPreviewPrefix(browser, open) {
         "a multi-image HEIF result reports that only its first image was kept",
       );
       await expectFailure(page, "corrupt.heic", "could not be read");
+      await expectFailure(page, "truncated-ftyp.heic", "could not be read");
+      /** Ensures a decodable still remains supported despite a compatible sequence brand. */
+      verify(
+        await convertAndDownload(page, "still-compatible.heic"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--pixel",
+        "20,20,255,0,0",
+      );
       /** Ensures unsupported HDR colours fail explicitly instead of exporting mislabelled sRGB. */
       await expectFailure(page, "hdr.heic", "colour space is not supported");
       /** Ensures a valid Gray ICC profile is rejected and the HEIC decoder stays usable. */

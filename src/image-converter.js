@@ -9,19 +9,15 @@ const ImageConverter = (() => {
   // A JPEG application segment carries a 16-bit length that includes its own two bytes.
   const MAX_JPEG_EXIF = 0xffff - 2 - 6;
   const HEIF_SCRIPT_URL = "vendor/libheif-1.23.6/libheif-bundle.js";
-  // Still images and collections are distinct from timed image sequences.
-  const HEIF_BRANDS = new Set(["heic", "heix", "mif1", "heif"]);
-  // Reject timed sequences and the layered still variants heim/heis under the same input policy.
-  // MP4RA registers heim/heis as collections, so they are not labelled sequence brands here.
-  const HEIF_REJECTED_BRANDS = new Set([
-    "heim",
-    "heis",
+  const HEIF_STILL_BRANDS = new Set(["heic", "heix", "mif1", "heif"]);
+  const HEIF_SEQUENCE_BRANDS = new Set([
     "hevc",
     "hevx",
     "hevm",
     "hevs",
     "msf1",
   ]);
+  const HEIF_LAYERED_BRANDS = new Set(["heim", "heis"]);
   const OUTPUTS = [
     {
       id: "jpeg",
@@ -105,13 +101,23 @@ const ImageConverter = (() => {
     return (crc ^ 0xffffffff) >>> 0;
   }
 
-  /** Reads major and compatible brands without treating the minor version or later boxes as brands. */
+  /** Reads complete brands within the ftyp box, retaining a readable major on truncated input. */
   function fileTypeBrands(bytes) {
     if (text(bytes, 4, 4) !== "ftyp") return [];
-    const length = uint32(bytes, 0);
-    if (length < 16 || length > bytes.length) return [];
-    const brands = [text(bytes, 8, 4)];
-    for (let offset = 16; offset + 4 <= length; offset += 4)
+    let length = uint32(bytes, 0);
+    let start = 8;
+    if (length === 1) {
+      if (bytes.length < 16) return [];
+      // The size only bounds a scan of this in-memory file, so even very large sizes are safe
+      // to clamp to bytes.length without relying on exact integers above Number.MAX_SAFE_INTEGER.
+      length = uint32(bytes, 8) * 2 ** 32 + uint32(bytes, 12);
+      start = 16;
+    } else if (length === 0) length = bytes.length;
+    if (length < start + 8 || bytes.length < start + 4) return [];
+    const brands = [text(bytes, start, 4)];
+    // Preserve recognition of corrupt HEIFs so the decoder can report an unreadable image.
+    const end = Math.min(length, bytes.length);
+    for (let offset = start + 8; offset + 4 <= end; offset += 4)
       brands.push(text(bytes, offset, 4));
     return brands;
   }
@@ -128,7 +134,10 @@ const ImageConverter = (() => {
     if (brands.includes("avif") || brands.includes("avis")) return null;
     if (
       brands.some(
-        (brand) => HEIF_BRANDS.has(brand) || HEIF_REJECTED_BRANDS.has(brand),
+        (brand) =>
+          HEIF_STILL_BRANDS.has(brand) ||
+          HEIF_SEQUENCE_BRANDS.has(brand) ||
+          HEIF_LAYERED_BRANDS.has(brand),
       )
     )
       return "heif";
@@ -171,18 +180,23 @@ const ImageConverter = (() => {
     return false;
   }
 
-  /**
-   * Reports animation and unsupported layered HEIF variants before decoding. Supported still
-   * HEIF collections report their image count after decoding.
-   */
-  function animatedFormat(bytes, format) {
-    if (format === "png" && pngAnimated(bytes)) return "png";
-    if (format === "webp" && webpAnimated(bytes)) return "webp";
-    if (
-      format === "heif" &&
-      fileTypeBrands(bytes).some((brand) => HEIF_REJECTED_BRANDS.has(brand))
-    )
-      return "heif";
+  /** Reports the reason an otherwise recognized container cannot be decoded by this converter. */
+  function rejectedContainer(bytes, format) {
+    if (format === "png" && pngAnimated(bytes)) return "animated";
+    if (format === "webp" && webpAnimated(bytes)) return "animated";
+    if (format !== "heif") return null;
+    const brands = fileTypeBrands(bytes);
+    const [major] = brands;
+    if (HEIF_SEQUENCE_BRANDS.has(major)) return "animated";
+    if (HEIF_LAYERED_BRANDS.has(major)) return "layered";
+    if (HEIF_STILL_BRANDS.has(major)) return null;
+    // Compatibility can describe both still and sequence profiles. Only an unknown major
+    // needs this fallback; prefer a supported still profile regardless of list order.
+    if (brands.some((brand) => HEIF_STILL_BRANDS.has(brand))) return null;
+    if (brands.some((brand) => HEIF_SEQUENCE_BRANDS.has(brand)))
+      return "animated";
+    if (brands.some((brand) => HEIF_LAYERED_BRANDS.has(brand)))
+      return "layered";
     return null;
   }
 
@@ -894,10 +908,16 @@ const ImageConverter = (() => {
         "unsupported",
         "Choose a HEIC, JPEG, PNG or WebP image. Other file types are not supported.",
       );
-    if (animatedFormat(bytes, format))
+    const rejection = rejectedContainer(bytes, format);
+    if (rejection === "animated")
       throw failure(
         "animated",
         "Animated images are not supported. Choose a single still image.",
+      );
+    if (rejection === "layered")
+      throw failure(
+        "layered",
+        "This HEIF file uses layered (L-HEVC) encoding, which is not supported. Export a single-layer HEIC and try again.",
       );
     const source =
       format === "heif"
@@ -917,7 +937,7 @@ const ImageConverter = (() => {
     MAX_FILE_BYTES,
     MAX_PIXELS,
     OUTPUTS,
-    animatedFormat,
+    rejectedContainer,
     convert,
     detectFormat,
     embedExif,
