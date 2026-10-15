@@ -145,6 +145,12 @@ Do not format unrelated files merely to make a repository-wide check pass.
 - Avoid modifying generated files unless the project workflow requires regeneration.
 - Keep unrelated formatting, refactors, dependency updates, and lockfile changes out of the diff.
 
+## Closing Issues
+
+- Before closing an issue as completed, review its requirements, the merged changes, and the current source on the default branch to confirm it is fully resolved.
+- Leave a brief closing comment stating where the fix is available, summarizing the resulting behavior, and linking the merged PRs and commit URLs. State what was verified and any remaining limitations.
+- Close as completed only when the issue is resolved. For duplicates, superseded work, or declined requests, explain the reason and link the replacement issue when applicable.
+
 ## PR Descriptions
 
 - Use the structure below for GitHub PR descriptions and dated task completion records.
