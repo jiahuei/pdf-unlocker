@@ -126,10 +126,8 @@
               </label>
               <p class="help" id="exifHelp">
                 Off by default. When on, the source EXIF, including any GPS
-                position, is copied into the converted file. If the original
-                image contains orientation metadata, the converter uses it to
-                rotate or mirror the image. Leave it off before sharing a photo
-                publicly.
+                position, is copied into the converted file. Leave it off before
+                sharing a photo publicly.
               </p>
             </div>
             <button class="button primary wide" id="convertBtn" type="submit">
@@ -173,6 +171,10 @@
             </div>
             <img id="resultPreview" alt="" hidden />
           </div>
+          <p class="help">
+            If the original image contains orientation metadata, the converter
+            uses it to rotate or mirror the image.
+          </p>
           <div id="batchPanel" class="download-section" hidden>
             <p
               id="batchSummary"
@@ -253,9 +255,8 @@
           </li>
           <li>
             EXIF, including the GPS position, is dropped unless you select
-            <strong>Keep location and shooting details</strong>. If the original
-            image contains orientation metadata, the converter uses it to rotate
-            or mirror the image. XMP is never copied.
+            <strong>Keep location and shooting details</strong>. XMP is never
+            copied.
           </li>
           <li>
             Transparent pixels are placed on white for JPEG output. PNG and WebP
