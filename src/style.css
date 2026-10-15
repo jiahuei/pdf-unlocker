@@ -815,12 +815,6 @@ code {
   border-collapse: collapse;
   font-size: 0.8rem;
 }
-.matrix caption {
-  text-align: left;
-  color: var(--muted);
-  font-size: 0.73rem;
-  padding-bottom: 12px;
-}
 .matrix th,
 .matrix td {
   padding: 10px 8px;
