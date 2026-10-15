@@ -76,6 +76,19 @@ button:focus-visible {
 [hidden] {
   display: none !important;
 }
+/* Off-screen rather than `display: none`, which would also drop the text from the
+   accessibility tree and defeat the point of hiding only its rendering. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .skip-link {
   position: absolute;
   left: 18px;
@@ -651,10 +664,141 @@ code {
   overflow-wrap: anywhere;
   margin-bottom: 16px;
 }
-.result-meta {
-  font-size: 0.75rem;
+.batch-summary {
+  font-size: 0.8rem;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+#batchPanel .tile-grid {
+  margin-top: 0;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tile[data-status="converting"] {
+  border-color: var(--accent);
+}
+.tile[data-status="converting"] .tile-meta {
+  color: var(--accent);
+}
+.tile[data-status="done"] {
+  border-color: #a8c9b8;
+}
+.tile[data-status="failed"] {
+  border-color: #dfb3a5;
+  background: #fffbf9;
+}
+.tile[data-status="failed"] .tile-meta {
+  color: #9a442e;
+}
+.tile[data-preview] {
+  /* A ring rather than a border colour, so the status colour survives. */
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.tile-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  color: #8694b9;
+  background: repeating-linear-gradient(
+    45deg,
+    #f6f7fb,
+    #f6f7fb 8px,
+    #f9faff 8px,
+    #f9faff 16px
+  );
+}
+/* The frame is a preview button only for a converted result; a pending tile keeps full contrast. */
+.tile-frame:disabled {
+  opacity: 1;
+}
+/* Keep the preview focus ring inside the tile's clipped edges. */
+.tile-frame:focus-visible {
+  outline-offset: -3px;
+}
+.tile-frame:focus-visible::after {
+  /* The positioned thumbnail otherwise paints over the inward outline. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  outline: inherit;
+  outline-offset: inherit;
+  pointer-events: none;
+}
+.tile-frame img {
+  /* Absolute, so the thumbnail fills the fixed-ratio frame instead of keeping the source's own
+     aspect ratio, and so the placeholder behind it stays centred. */
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: white;
+  /* Transparent until decoded, so the placeholder shows through and a source the browser cannot
+     render cannot flash a missing-image glyph. Unlike `hidden`, this keeps a layout box, which
+     lazy loading needs in order to decide the thumbnail is near the viewport. */
+  opacity: 0;
+}
+.tile-frame img[data-loaded] {
+  opacity: 1;
+}
+.tile-symbol {
+  font-size: 30px;
+}
+.tile-caption {
+  padding: 8px 10px;
+}
+.tile-name {
+  font-size: 0.72rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.tile-meta {
+  font-size: 0.68rem;
   color: var(--muted);
-  margin: -10px 0 16px;
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+}
+.tile-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  flex-shrink: 0;
+  margin: auto 10px 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+.tile-button:hover {
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+  color: white;
 }
 .how-section {
   display: grid;
@@ -684,12 +828,6 @@ code {
   border-collapse: collapse;
   font-size: 0.8rem;
 }
-.matrix caption {
-  text-align: left;
-  color: var(--muted);
-  font-size: 0.73rem;
-  padding-bottom: 12px;
-}
 .matrix th,
 .matrix td {
   padding: 10px 8px;
@@ -712,7 +850,11 @@ code {
   font-weight: 650;
 }
 .notes-list {
-  margin: 18px 0 0;
+  /* A full-width third grid row below the format card: these explanations are long enough to
+     stretch the narrow desktop column they used to share with the table. The section's row gap
+     supplies the spacing, so the list needs no margin of its own. */
+  grid-column: 1 / -1;
+  margin: 0;
   padding-left: 18px;
   color: var(--muted);
   font-size: 0.76rem;

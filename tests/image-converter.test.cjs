@@ -8,10 +8,12 @@ const {
   MAX_FILE_BYTES,
   MAX_PIXELS,
   OUTPUTS,
-  animatedFormat,
+  rejectedContainer,
+  convert,
   detectFormat,
   embedExif,
   outputName,
+  outputNames,
   exifTiff,
   exifOrientation,
   normalizeExif,
@@ -48,8 +50,14 @@ const webp = (...chunks) =>
     ...text("WEBP"),
     ...chunks.flat(),
   ]);
-const heif = (brand) =>
-  Uint8Array.from([...uint32BE(24), ...text("ftyp"), ...text(brand)]);
+const heif = (brand, ...compatible) =>
+  Uint8Array.from([
+    ...uint32BE(16 + 4 * compatible.length),
+    ...text("ftyp"),
+    ...text(brand),
+    ...uint32BE(0),
+    ...text(compatible.join("")),
+  ]);
 const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]);
 const ihdr = pngChunk("IHDR", new Array(13).fill(0));
 const vp8x = webpChunk("VP8X", [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -426,7 +434,9 @@ test("detects the supported formats from file signatures", () => {
 /** Ensures formats outside the published matrix, including AVIF and plain text, are refused. */
 test("refuses formats outside the matrix", () => {
   for (const bytes of [
-    heif("avif"),
+    heif("avif", "mif1"),
+    heif("avis", "msf1"),
+    heif("mif1", "avif"),
     heif("qt  "),
     Uint8Array.from(text("GIF89a....")),
     Uint8Array.from(text("%PDF-1.7\n")),
@@ -437,49 +447,193 @@ test("refuses formats outside the matrix", () => {
     assert.equal(detectFormat(bytes), null, String(bytes));
 });
 
+/** Ensures known major brands control rejection, with separate errors for sequences and layered stills. */
+test("rejects HEIF sequence and layered majors before decoding", async () => {
+  for (const [brand, code] of [
+    ...["hevc", "hevx", "hevm", "hevs", "msf1"].map((brand) => [
+      brand,
+      "animated",
+    ]),
+    ...["heim", "heis"].map((brand) => [brand, "layered"]),
+  ]) {
+    for (const bytes of [heif(brand), heif(brand, "mif1", "heic")]) {
+      assert.equal(detectFormat(bytes), "heif", brand);
+      assert.equal(rejectedContainer(bytes, "heif"), code, brand);
+      let codecRequested = false;
+      await assert.rejects(
+        convert(new Blob([bytes]), OUTPUTS[0], 0.8, {
+          onStage() {
+            codecRequested = true;
+          },
+        }),
+        {
+          code,
+          message:
+            code === "animated"
+              ? "Animated images are not supported. Choose a single still image."
+              : "This HEIF file uses layered (L-HEVC) encoding, which is not supported. Export a single-layer HEIC and try again.",
+        },
+      );
+      assert.equal(
+        codecRequested,
+        false,
+        "container rejection must not load the decoder",
+      );
+    }
+  }
+});
+
+/**
+ * Ensures only a HEIF-family major brand enters the HEIF path. Compatible brands declare extra
+ * conformance, so a general ISO-BMFF container listing one is not a HEIF file and must be refused
+ * immediately rather than downloading the 2 MB decoder only to fail inside it.
+ */
+test("refuses non-HEIF majors that merely declare HEIF compatibility", async () => {
+  for (const bytes of [
+    heif("mp41", "mp41", "mif1"),
+    heif("isom", "heic"),
+    heif("isom", "msf1"),
+    heif("isom", "heis"),
+  ]) {
+    assert.equal(detectFormat(bytes), null, String(bytes));
+    let codecRequested = false;
+    await assert.rejects(
+      convert(new Blob([bytes]), OUTPUTS[0], 0.8, {
+        onStage() {
+          codecRequested = true;
+        },
+      }),
+      {
+        code: "unsupported",
+        message:
+          "Choose a HEIC, JPEG, PNG or WebP image. Other file types are not supported.",
+      },
+    );
+    assert.equal(
+      codecRequested,
+      false,
+      "an unsupported container must not load the decoder",
+    );
+  }
+});
+
+/** Ensures sequence compatibility cannot misclassify documented stills or depend on list order. */
+test("gives supported still major brands precedence over compatible profiles", () => {
+  for (const major of ["heic", "heix", "mif1", "heif"]) {
+    for (const compatible of [
+      [],
+      ["mif1", "heic", "hevc"],
+      ["msf1"],
+      ["heim", "heis"],
+    ]) {
+      const bytes = heif(major, ...compatible);
+      assert.equal(detectFormat(bytes), "heif");
+      assert.equal(
+        rejectedContainer(bytes, "heif"),
+        null,
+        `${major}: ${compatible}`,
+      );
+    }
+  }
+});
+
+/** Ensures box sizes and offsets exclude minor-version and sibling bytes from brand classification. */
+test("reads ordinary, to-EOF and 64-bit HEIF ftyp boxes", () => {
+  for (const [major, rejection] of [
+    ["heic", null],
+    ["hevc", "animated"],
+    ["heis", "layered"],
+  ]) {
+    const ordinary = heif(major, "mif1", "heic");
+    const toEnd = ordinary.slice();
+    toEnd.set(uint32BE(0), 0);
+    const extended = Uint8Array.from([
+      ...uint32BE(1),
+      ...text("ftyp"),
+      ...uint32BE(0),
+      ...uint32BE(ordinary.length + 8),
+      ...ordinary.subarray(8),
+    ]);
+    for (const bytes of [ordinary, toEnd, extended]) {
+      assert.equal(detectFormat(bytes), "heif");
+      assert.equal(rejectedContainer(bytes, "heif"), rejection);
+    }
+  }
+  const minorVersion = heif("mif1", "heic");
+  minorVersion.set(text("avif"), 12);
+  assert.equal(detectFormat(minorVersion), "heif");
+  assert.equal(rejectedContainer(minorVersion, "heif"), null);
+  const afterBox = Uint8Array.from([...heif("mif1", "heic"), ...text("avif")]);
+  assert.equal(detectFormat(afterBox), "heif");
+  assert.equal(rejectedContainer(afterBox, "heif"), null);
+});
+
+/** Ensures a readable HEIF major survives truncation, while incomplete headers cannot invent brands. */
+test("retains recognizable truncated HEIF headers for decoder errors", () => {
+  const ordinary = heif("heic", "msf1").subarray(0, 19);
+  assert.equal(detectFormat(ordinary), "heif");
+  assert.equal(rejectedContainer(ordinary, "heif"), null);
+  const extended = Uint8Array.from([
+    ...uint32BE(1),
+    ...text("ftyp"),
+    ...uint32BE(0),
+    ...uint32BE(24),
+    ...text("heic"),
+  ]);
+  assert.equal(detectFormat(extended), "heif");
+  assert.equal(detectFormat(extended.subarray(0, 12)), null);
+  assert.equal(detectFormat(extended.subarray(0, 19)), null);
+  // A size beyond the JS exact-integer range still bounds the scan to available bytes.
+  extended.set(uint32BE(0x200000), 8);
+  assert.equal(detectFormat(extended), "heif");
+  extended.set(uint32BE(0), 8);
+  extended.set(uint32BE(16), 12);
+  assert.equal(detectFormat(extended), null);
+});
+
 /**
  * Ensures animated inputs are reported instead of quietly keeping their first frame, and that
  * the PNG and WebP chunk walks read their big- and little-endian lengths correctly.
  */
 test("detects animated PNG and WebP inputs", () => {
   assert.equal(
-    animatedFormat(
+    rejectedContainer(
       png(ihdr, pngChunk("acTL", [0, 0, 0, 2, 0, 0, 0, 0])),
       "png",
     ),
-    "png",
+    "animated",
   );
   assert.equal(
-    animatedFormat(
+    rejectedContainer(
       webp(vp8x, webpChunk("ANIM", new Array(6).fill(0)), webpChunk("ANMF")),
       "webp",
     ),
-    "webp",
+    "animated",
   );
   // A trailing acTL is not animation, and neither is a still VP8 or VP8L payload.
   assert.equal(
-    animatedFormat(png(ihdr, pngChunk("IDAT"), pngChunk("acTL")), "png"),
+    rejectedContainer(png(ihdr, pngChunk("IDAT"), pngChunk("acTL")), "png"),
     null,
   );
-  assert.equal(animatedFormat(webp(vp8x, webpChunk("VP8 ")), "webp"), null);
-  assert.equal(animatedFormat(webp(vp8x, webpChunk("VP8L")), "webp"), null);
-  assert.equal(animatedFormat(jpeg, "jpeg"), null);
-  assert.equal(animatedFormat(png(ihdr), "png"), null);
+  assert.equal(rejectedContainer(webp(vp8x, webpChunk("VP8 ")), "webp"), null);
+  assert.equal(rejectedContainer(webp(vp8x, webpChunk("VP8L")), "webp"), null);
+  assert.equal(rejectedContainer(jpeg, "jpeg"), null);
+  assert.equal(rejectedContainer(png(ihdr), "png"), null);
 });
 
 /** Ensures valid unknown FourCC chunks cannot hide animation, including odd-length padding. */
 test("detects WebP animation after unknown chunks", () => {
   for (const type of ["test", "x!  "])
     assert.equal(
-      animatedFormat(
+      rejectedContainer(
         webp(vp8x, webpChunk(type, [1, 2, 3]), webpChunk("ANMF")),
         "webp",
       ),
-      "webp",
+      "animated",
       type,
     );
   assert.equal(
-    animatedFormat(webp(webpChunk("test", text("ANMF"))), "webp"),
+    rejectedContainer(webp(webpChunk("test", text("ANMF"))), "webp"),
     null,
   );
 });
@@ -523,6 +677,38 @@ test("derives the output filename", () => {
   assert.equal(outputName(".hidden", ".jpg"), ".hidden.jpg");
 });
 
+/**
+ * Ensures a batch never offers two downloads under the same name: colliding sources gain
+ * deterministic numeric suffixes, and a suffix another source already used is skipped.
+ */
+test("allocates distinct output filenames within a batch", () => {
+  assert.deepEqual(outputNames(["a.jpg", "b.png"], ".webp"), [
+    "a.webp",
+    "b.webp",
+  ]);
+  // Different source extensions share one output extension, so the second name collides.
+  assert.deepEqual(outputNames(["photo.jpg", "photo.png"], ".jpg"), [
+    "photo.jpg",
+    "photo-2.jpg",
+  ]);
+  assert.deepEqual(
+    outputNames(["photo.png", "photo.jpg", "photo.webp", "photo.heic"], ".png"),
+    ["photo.png", "photo-2.png", "photo-3.png", "photo-4.png"],
+  );
+  // A source that already carries a suffix occupies that name, so a collision skips past it.
+  assert.deepEqual(
+    outputNames(["photo-2.png", "photo.png", "photo.jpg"], ".jpg"),
+    ["photo-2.jpg", "photo.jpg", "photo-3.jpg"],
+  );
+  // A name that already ends in a suffix keeps its own stem, and duplicates stay distinct.
+  assert.deepEqual(outputNames(["photo-2.jpg", "photo-2.jpg"], ".jpg"), [
+    "photo-2.jpg",
+    "photo-2-2.jpg",
+  ]);
+  assert.deepEqual(outputNames([], ".jpg"), []);
+  assert.deepEqual(outputNames(["", ""], ".jpg"), ["image.jpg", "image-2.jpg"]);
+});
+
 /** Keeps the conversion table and the limits in agreement with the published documentation. */
 test("publishes the documented outputs and limits", () => {
   assert.deepEqual(
@@ -561,18 +747,25 @@ test("publishes the documented outputs and limits", () => {
   assert.equal(MAX_PIXELS, 50 * 1000 * 1000);
 });
 
-/** Ensures MPF multi-picture JPEGs are rejected before native decoding can drop extra images. */
-test("rejects multi-picture JPEGs while allowing single-image MPF", async () => {
+/** Ensures MPF counts survive first-image conversion, including both TIFF byte orders. */
+test("reports multi-picture JPEG counts while converting the first image", async () => {
   const source = readFileSync(
     require.resolve("../src/image-converter.js"),
     "utf8",
   );
   let decodes = 0;
+  let closes = 0;
   const context = {
     Blob,
     createImageBitmap: async () => {
       decodes++;
-      throw new Error("Reached the native decoder");
+      return { width: 2, height: 1, close: () => closes++ };
+    },
+    document: {
+      createElement: () => ({
+        getContext: () => ({ fillRect() {}, drawImage() {} }),
+        toBlob: (callback, type) => callback(new Blob(["encoded"], { type })),
+      }),
     },
     module: { exports: {} },
   };
@@ -606,27 +799,27 @@ test("rejects multi-picture JPEGs while allowing single-image MPF", async () => 
           0xd9,
         ]),
       ]);
-    for (const count of [2, 4])
-      await assert.rejects(
-        context.module.exports.convert(file(mpf(count)), OUTPUTS[0], 0.8),
-        (error) =>
-          error.code === "multiple" &&
-          error.message.includes(`holds ${count} images`),
+    for (const count of [2, 4]) {
+      const result = await context.module.exports.convert(
+        file(mpf(count)),
+        OUTPUTS[0],
+        0.8,
       );
+      assert.equal(result.imageCount, count);
+      assert.equal(result.blob.type, "image/jpeg");
+    }
     // An incomplete index must not read beyond its segment or invent an extra picture.
     for (const payload of [
       mpf(1),
       mpf(2).slice(0, 20),
       [0, 0, 0, 0, ...mpf(2)],
     ])
-      await assert.rejects(
-        context.module.exports.convert(file(payload), OUTPUTS[0], 0.8),
-        (error) => error.code === "decode",
+      assert.equal(
+        (await context.module.exports.convert(file(payload), OUTPUTS[0], 0.8))
+          .imageCount,
+        1,
       );
   }
-  assert.equal(
-    decodes,
-    6,
-    "only single-image or unrecognised MPF reaches decoding",
-  );
+  assert.equal(decodes, 10, "each file is decoded once");
+  assert.equal(closes, decodes, "every decoded bitmap is closed");
 });

@@ -33,7 +33,13 @@ The RHB and Maybank date fields start at 1 November 1993; change them to the dat
 
 ### Image Converter
 
-Convert one image at a time, with HEIC-to-JPG as the main use case. Choose a file, pick an output format and a quality for lossy output, preview the result and download it. JPEG and WebP quality starts at 80; Start over restores that default.
+Convert images one at a time or in a batch, with HEIC-to-JPG as the main use case. Choose one or more files, pick a single output format and quality for the whole batch, then preview each result and download the ones you want. JPEG and WebP quality starts at 80; Start over restores that default.
+
+Your chosen files and their conversions each appear as a gallery of thumbnails, captioned with the file name, its dimensions and its size; a converted tile adds whether EXIF was kept. Choose a converted thumbnail to preview that result full size above the gallery, then choose **Download result** to save it. Both download buttons have filename-specific tooltips and accessible labels. If the browser cannot display a HEIC directly, the gallery generates a small preview locally with the HEIC decoder. The caption shows the original dimensions, and the input download still saves the untouched file. Unsupported or unreadable inputs keep a placeholder; conversion reports the error.
+
+Each input tile has a **Download input** button for debugging, available before conversion and even if conversion fails. It saves the exact file and filename received by the page, including its metadata. An iPhone may have already converted a selected HEIC photo to JPEG before passing it to the browser, so this download may differ from the camera original. Conversion settings do not change input downloads.
+
+A batch is converted in the order you selected, one file at a time, and every file shares the output format, quality and EXIF setting. A file that cannot be converted reports its own reason on its own tile and does not stop the rest; the panel keeps a success and failure count. Files whose names would collide gain a numeric suffix (`photo.jpg`, `photo-2.jpg`). Source thumbnails stay with the selected files; converted images are cleared when settings change. Both are held in browser memory until you replace the files, choose Start over or leave the page, so very large batches can use a lot of memory on a phone. Choosing new files replaces the current batch and discards its results.
 
 | Input       | To JPG | To PNG | To WebP |
 | ----------- | :----: | :----: | :-----: |
@@ -50,14 +56,14 @@ What to expect from a conversion:
 - **Colours are converted to sRGB.** Unsupported HEIC profiles, including grayscale ICC profiles and HDR, produce an explanatory error. See [supported colour profiles](SPEC.md#colour-conversion).
 - **EXIF is dropped unless you ask to keep it**, so a converted photo cannot quietly carry its GPS position. Tick **Keep location and shooting details (EXIF)** to transplant the source EXIF into JPEG, PNG or WebP output. If the original image contains orientation metadata, the converter uses it to rotate or mirror the image. Retained EXIF is updated to describe the converted image, and XMP is never copied. Leave it unticked before sharing a photo publicly.
 - **Transparency** is placed on white for JPEG, which has no alpha channel, and preserved for PNG and WebP.
-- **Still images only.** Animated GIF, APNG and animated WebP files are rejected instead of quietly keeping their first frame, as are HEIF files holding several images and multi-picture JPEG/MPO files. AVIF and HDR gain maps are not supported.
+- **Still images only.** Animated GIF, APNG, animated WebP and HEIF image sequences are rejected. A still HEIF is not treated as a sequence merely because it lists a sequence-compatible profile. Layered HEIF variants `heim` and `heis` are also unsupported and report their own layered-encoding error. For HEIF files holding several images and multi-picture JPEG/MPO files, only the first image is converted, and its result tile reports how many images the source held and that only the first was kept. Selecting several files is an ordinary batch. AVIF and HDR gain maps are not supported.
 - **Limits** are 40 MB per file and 50 megapixels decoded. Your browser's own canvas limit can be lower, which is reported as a failed conversion rather than a broken file.
 
-The first HEIC conversion downloads its decoder; later conversions reuse it. Internet access is required for that download. See [browser requirements](#browser-support) and the [conversion specification](SPEC.md#image-conversion) for limitations.
+The first HEIC preview or conversion that needs the decoder loads it from this site; later previews and conversions in that page session reuse it. Browser caching may avoid downloading it again on later visits. See [browser requirements](#browser-support) and the [conversion specification](SPEC.md#image-conversion) for limitations.
 
 ## Privacy
 
-Documents, images and passwords are read, processed and written inside your browser. The site never sends file contents or passwords to a server, and no analytics run. The only network requests are the [library downloads](SPEC.md#runtime-dependencies), which cannot see your files.
+Documents, images and passwords are read, processed and written inside your browser. The site never sends file contents or passwords to a server, and no analytics run. Normal HEIC conversion loads its decoder from this site and makes no third-party requests. The PDF tool downloads its runtime libraries from CDNs. The optional debug console also loads from a CDN when explicitly enabled. These [library requests](SPEC.md#runtime-dependencies) do not include your file contents.
 
 ## Running Locally
 
@@ -77,6 +83,8 @@ Internet access is required to load the browser libraries and Python packages. P
 [SPEC.md](SPEC.md) describes the repository structure, architecture, PDF and image behavior contracts, runtime dependencies and Pages deployment. [AGENTS.md](AGENTS.md) contains contributor workflow and verification requirements.
 
 ## Development and verification
+
+The checked-in HEIC decoder was compiled from source. See the [verified Linux rebuild instructions](src/vendor/libheif-1.23.6/README.md#rebuilding-on-linux) for pinned SDK/CMake installation, source checksums, the build command and output verification. Ordinary development does not require rebuilding it.
 
 Tests use synthetic documents and images, and keep their dependencies outside the project:
 
@@ -103,13 +111,13 @@ npm install --prefix /tmp/pdf-unlocker-browser-tests playwright@1.58.2
 /tmp/pdf-unlocker-browser-tests/node_modules/.bin/playwright install chromium
 PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/browser.test.cjs
 PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/image-browser.test.cjs
-# Optional: also convert a real camera photo kept outside the repository
+# Optional: override the bundled regression photo with another camera photo
 TEST_HEIC=/path/to/photo.heic PLAYWRIGHT_MODULE=/tmp/pdf-unlocker-browser-tests/node_modules/playwright PYTHONPATH=/tmp/pdf-unlocker-test-python node tests/image-browser.test.cjs
 ```
 
 Run the server in a separate terminal. Browser suites independently verify downloads with pypdf or Pillow. See [browser coverage](SPEC.md#browser-tests).
 
-Internet access is required for browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. `TEST_HEIC` adds a real camera photo kept outside the repository; never commit the photo or its derivatives because they can carry personal metadata. OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from physical iOS Safari verification.
+Internet access is required for browser-runtime tests. `TEST_BASE_URL` overrides the server URL; `TEST_SCREENSHOTS` saves screenshots. With `pillow-heif` installed, the suite tests the approved `tests/fixtures/IMG_0308.heic` photograph with EXIF retention off and on by default. This photograph contains no EXIF; both cases assert that none is added, and the retention-on tile reports `no EXIF in the source`. Synthetic GPS-tagged HEIC fixtures cover metadata retention. `TEST_HEIC` overrides that case with another photo kept outside the repository; additional personal photos or derivatives require explicit permission before committing. See [fixture provenance](tests/fixtures/README.md). OS browser libraries may need the platform setup described by Playwright. Mobile emulation is distinct from physical iOS Safari verification.
 
 The push workflow `.github/workflows/lint.yml` runs Prettier 3.8.3 on Node 24 and Ruff 0.15.9 on Python 3.12 for all branches, plus the Node tests above. These are development tools only; the site still deploys without a build step. Install Node/npm and uv, then run the same checks locally:
 
@@ -141,4 +149,4 @@ Both tools require browser support for WebAssembly, canvas encoding and `createI
 
 ## License
 
-MIT License - feel free to use and modify for your own projects. The bundled third-party libraries keep their own licences: Pyodide (MPL-2.0), PDF.js (Apache-2.0), pypdf (BSD-3-Clause) and libheif-js with libheif and libde265 (LGPL-3.0). They are loaded from public CDNs at runtime and are not redistributed by this repository.
+MIT License - feel free to use and modify for your own projects. The bundled third-party libraries keep their own licences: Pyodide (MPL-2.0), PDF.js (Apache-2.0), pypdf (BSD-3-Clause) and libheif with libde265 (LGPL-3.0). The PDF libraries load from public CDNs. The HEIC decoder is served locally; its [exact sources, licences and rebuild instructions](src/vendor/libheif-1.23.6/README.md) accompany the checked-in bundle.

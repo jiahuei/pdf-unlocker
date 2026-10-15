@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Convert HEIC photos to JPG in your browser, or convert between JPEG, PNG and WebP. Images are processed on your device and are never uploaded."
+      content="Convert HEIC photos to JPG in your browser, one or many at a time, or convert between JPEG, PNG and WebP. Images are processed on your device and are never uploaded."
     />
     <meta name="theme-color" content="#465bd8" />
     <title>HEIC to JPG Image Converter — File tools</title>
@@ -39,10 +39,11 @@
     </header>
     <main id="main" class="page">
       <header class="page-heading">
-        <h1>Convert your image</h1>
+        <h1>Convert your images</h1>
         <p class="intro">
-          Turn a HEIC photo into a widely usable JPG, or convert between JPEG,
-          PNG and WebP. Your image is processed on this device.
+          Turn HEIC photos into widely usable JPG files, or convert between
+          JPEG, PNG and WebP. Choose one image or a whole batch; every image is
+          processed on this device.
         </p>
         <div class="trust-row">
           <span>Images stay in your browser</span
@@ -52,27 +53,32 @@
       <div class="workspace">
         <section class="panel source-panel" aria-labelledby="source-title">
           <div class="panel-heading">
-            <h2 id="source-title"><span class="step">01</span> Your image</h2>
+            <h2 id="source-title"><span class="step">01</span> Your images</h2>
             <span class="badge">Browser only</span>
           </div>
           <form id="convertForm" novalidate>
-            <label class="field-label" for="imageFile">Choose an image</label>
+            <label class="field-label" for="imageFile">Choose images</label>
             <div class="file-drop" id="fileDrop">
               <span class="file-symbol" aria-hidden="true">↥</span
-              ><strong id="fileName">Choose an image</strong
-              ><span id="fileHelp">or drop it here</span
+              ><strong id="fileName">Choose images</strong
+              ><span id="fileHelp">or drop them here</span
               ><input
                 type="file"
                 id="imageFile"
                 name="image"
+                multiple
                 accept=".heic,.heif,image/heic,image/heif,.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
                 aria-describedby="fileHelp filePrivacy"
               />
             </div>
             <p class="help" id="filePrivacy">
               HEIC, JPEG, PNG and WebP files are processed locally and are never
-              uploaded.
+              uploaded. Choose several files to convert them in one batch; a new
+              selection replaces the current one. Use an image's Download input
+              button to save the exact file received by this page; your iPhone
+              may have already converted HEIC to JPEG when you selected it.
             </p>
+            <ul id="sourceList" class="tile-grid" hidden></ul>
             <div class="option-field">
               <label class="field-label" for="outputFormat"
                 >Output format</label
@@ -120,14 +126,13 @@
               </label>
               <p class="help" id="exifHelp">
                 Off by default. When on, the source EXIF, including any GPS
-                position, is copied into the converted file. If the original
-                image contains orientation metadata, the converter uses it to
-                rotate or mirror the image. Leave it off before sharing a photo
-                publicly.
+                position, is copied into the converted file. Leave it off before
+                sharing a photo publicly.
               </p>
             </div>
             <button class="button primary wide" id="convertBtn" type="submit">
-              Convert image <span aria-hidden="true">→</span></button
+              <span id="convertLabel">Convert image</span>
+              <span aria-hidden="true">→</span></button
             ><button class="reset-button" id="resetBtn" type="button">
               Start over
             </button>
@@ -141,18 +146,18 @@
           </form>
           <noscript
             ><p class="message error">
-              Enable JavaScript to convert your image.
+              Enable JavaScript to convert your images.
             </p></noscript
           >
           <div class="privacy-note">
             <span aria-hidden="true">◇</span>
-            <p>Your image never leaves this device. No account, no upload.</p>
+            <p>Your images never leave this device. No account, no upload.</p>
           </div>
         </section>
         <section class="panel preview-panel" aria-labelledby="preview-title">
           <div class="panel-heading">
             <h2 id="preview-title">
-              <span class="step">02</span> Your conversion
+              <span class="step">02</span> Your conversions
             </h2>
             <span class="badge neutral" id="previewBadge"
               >No conversion yet</span
@@ -166,14 +171,22 @@
             </div>
             <img id="resultPreview" alt="" hidden />
           </div>
-          <div id="imageActions" class="download-section" hidden>
-            <p class="result-label">Your converted image is ready</p>
-            <p id="resultName" class="result-name"></p>
-            <p id="resultMeta" class="result-meta"></p>
-            <a id="downloadBtn" class="button primary wide" download
-              >Download image <span aria-hidden="true">↓</span></a
-            >
-            <p class="help">The original file stays unchanged.</p>
+          <p class="help">
+            If the original image contains orientation metadata, the converter
+            uses it to rotate or mirror the image.
+          </p>
+          <div id="batchPanel" class="download-section" hidden>
+            <p
+              id="batchSummary"
+              class="batch-summary"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <ul id="resultList" class="tile-grid"></ul>
+            <p class="help">
+              Choose a thumbnail to preview that result above, then download it.
+              The original files stay unchanged.
+            </p>
           </div>
         </section>
       </div>
@@ -181,13 +194,14 @@
         <div>
           <h2 id="formats-title">Supported conversions</h2>
           <p class="section-note">
-            Every conversion below runs in your browser. The HEIC decoder is
-            downloaded once, the first time you convert a HEIC photo.
+            Every conversion below runs in your browser. The HEIC decoder loads
+            from this site when first needed for a HEIC preview or conversion
+            and is reused for the rest of the page session.
           </p>
         </div>
         <div class="matrix-card">
           <table class="matrix">
-            <caption>
+            <caption class="visually-hidden">
               Input formats against the output formats they can be converted to
             </caption>
             <thead>
@@ -225,43 +239,49 @@
               </tr>
             </tbody>
           </table>
-          <ul class="notes-list">
-            <li>
-              HEIC input covers HEVC-encoded photos, which is what iPhone and
-              recent Android cameras write. AVIF, animated HEIF and HEIC burst
-              files are not supported.
-            </li>
-            <li>
-              Orientation and supported colour profiles are applied before
-              export to sRGB. Source colour profiles are not copied. Unsupported
-              HEIC colour spaces, including grayscale ICC profiles and HDR, are
-              rejected.
-            </li>
-            <li>
-              EXIF, including the GPS position, is dropped unless you select
-              <strong>Keep location and shooting details</strong>. If the
-              original image contains orientation metadata, the converter uses
-              it to rotate or mirror the image. XMP is never copied.
-            </li>
-            <li>
-              Transparent pixels are placed on white for JPEG output. PNG and
-              WebP keep transparency.
-            </li>
-            <li>
-              Animated GIF, APNG and animated WebP files are rejected rather
-              than quietly keeping their first frame, as are files holding
-              several images.
-            </li>
-            <li>
-              Limits are 40 MB per file and 50 megapixels decoded. Very large
-              images can also reach your browser's own canvas limit.
-            </li>
-            <li>
-              WebP output needs browser support; the option is disabled where
-              your browser cannot write WebP.
-            </li>
-          </ul>
         </div>
+        <ul class="notes-list">
+          <li>
+            HEIC input covers HEVC-encoded photos, which is what iPhone and
+            recent Android cameras write. AVIF and animated HEIF files are not
+            supported. Layered HEIF encodings are also unsupported and report a
+            separate explanation.
+          </li>
+          <li>
+            Orientation and supported colour profiles are applied before export
+            to sRGB. Source colour profiles are not copied. Unsupported HEIC
+            colour spaces, including grayscale ICC profiles and HDR, are
+            rejected.
+          </li>
+          <li>
+            EXIF, including the GPS position, is dropped unless you select
+            <strong>Keep location and shooting details</strong>. XMP is never
+            copied.
+          </li>
+          <li>
+            Transparent pixels are placed on white for JPEG output. PNG and WebP
+            keep transparency.
+          </li>
+          <li>
+            Animated GIF, APNG, WebP and HEIF image sequences are rejected.
+            Supported still HEIF collections and JPEG/MPO files convert only
+            their first image, with a message on the result tile saying so.
+          </li>
+          <li>
+            Limits are 40 MB per file and 50 megapixels decoded. Very large
+            images can also reach your browser's own canvas limit.
+          </li>
+          <li>
+            A batch is converted one file at a time, in the order you chose. A
+            file that cannot be converted fails on its own and does not stop the
+            rest. Converted images are kept in your browser's memory until you
+            replace them or leave the page.
+          </li>
+          <li>
+            WebP output needs browser support; the option is disabled where your
+            browser cannot write WebP.
+          </li>
+        </ul>
       </section>
       <section class="how-section" aria-labelledby="how-title">
         <div>
@@ -271,8 +291,8 @@
           <li>
             <span class="step">1</span>
             <div>
-              <h3>Choose your image</h3>
-              <p>Select a photo from your device, or drop it here.</p>
+              <h3>Choose your images</h3>
+              <p>Select one or more photos, or drop them here.</p>
             </div>
           </li>
           <li>
@@ -286,14 +306,15 @@
             <span class="step">3</span>
             <div>
               <h3>Preview and save</h3>
-              <p>Check the result, then download the converted copy.</p>
+              <p>Check each result, then download the converted copies.</p>
             </div>
           </li>
         </ol>
       </section>
       <p class="connection-note">
-        Internet is needed once to load the HEIC decoder. Your images are never
-        uploaded.
+        The HEIC decoder loads from this site when needed. Normal image
+        conversion makes no third-party requests; the optional debug console
+        loads from a third-party CDN. Your images are never uploaded.
       </p>
     </main>
     <footer>

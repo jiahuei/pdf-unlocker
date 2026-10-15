@@ -28,18 +28,20 @@ function python(args) {
     encoding: "utf8",
   });
   assert.equal(process.status, 0, process.stderr || process.stdout);
+  return process.stdout;
 }
 python([path.join(__dirname, "image_fixtures.py"), fixtures]);
-// A real camera photo exercises what synthetic fixtures cannot: grid-derived HEVC tiles, a wide
-// gamut profile, container rotation and auxiliary items. It is copied in from TEST_HEIC so no
-// personal photograph, or the GPS metadata inside it, is committed to the repository.
-const realHeic = process.env.TEST_HEIC;
+const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
+// The approved camera fixture covers real 10-bit 4:4:4 tiles and Display P3 colours.
+// TEST_HEIC can substitute another private photo without adding it to the repository.
+const realHeic =
+  process.env.TEST_HEIC ||
+  (heicFixtures ? path.join(__dirname, "fixtures", "IMG_0308.heic") : null);
 if (realHeic && !fs.existsSync(realHeic))
   throw new Error(`TEST_HEIC does not exist: ${realHeic}`);
 if (realHeic) fs.copyFileSync(realHeic, path.join(fixtures, "real.heic"));
-const heicFixtures = fs.existsSync(path.join(fixtures, "photo.heic"));
 
-/** Checks a real download independently with Pillow instead of trusting the success message. */
+/** Checks downloaded or preview image bytes independently with Pillow instead of trusting the UI. */
 function verify(file, ...expectations) {
   python([path.join(__dirname, "verify_image.py"), file, ...expectations]);
   verified++;
@@ -56,64 +58,295 @@ function watch(context) {
     return page;
   };
 }
-/** Converts one fixture in the real browser and returns the downloaded file path. */
-async function convertAndDownload(page, fixture, options = {}) {
-  const format = options.format || "jpeg";
-  const extension = { jpeg: "jpg", png: "png", webp: "webp" }[format];
-  const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
-  await page.locator("#imageFile").setInputFiles(path.join(fixtures, fixture));
-  await page.locator("#outputFormat").selectOption(format);
+/** Waits until every thumbnail of a gallery has decoded, scrolling it into view for lazy images. */
+function waitThumbnails(page, list) {
+  return (
+    page
+      .locator(`${list} .tile`)
+      .last()
+      .scrollIntoViewIfNeeded()
+      .then(() =>
+        page.waitForFunction(
+          (selector) =>
+            [...document.querySelectorAll(`${selector} .tile-frame img`)].every(
+              (image) =>
+                image.complete &&
+                image.closest(".tile").getAttribute("aria-busy") !== "true",
+            ),
+          list,
+          { timeout: 30000 },
+        ),
+      )
+      // An empty gallery has no tiles to scroll to, and nothing to wait for either.
+      .catch(() => {})
+  );
+}
+/** Waits for the running batch to settle: every tile reached a final status and the form is idle. */
+async function waitBatch(page, timeout = 120000) {
+  await page.waitForFunction(
+    () => {
+      const tiles = [...document.querySelectorAll("#resultList .tile")];
+      return (
+        tiles.length > 0 &&
+        !document.getElementById("convertBtn").disabled &&
+        tiles.every((tile) => ["done", "failed"].includes(tile.dataset.status))
+      );
+    },
+    null,
+    { timeout },
+  );
+  await waitThumbnails(page, "#resultList");
+}
+/** Reads every result tile's name, status, detail line, thumbnail state and download name. */
+function tileStates(page) {
+  return page.locator("#resultList .tile").evaluateAll((tiles) =>
+    tiles.map((tile) => ({
+      name: tile.querySelector(".tile-name").textContent,
+      status: tile.dataset.status,
+      meta: tile.querySelector(".tile-meta").textContent,
+      thumbnail: tile
+        .querySelector(".tile-frame img")
+        .hasAttribute("data-loaded"),
+      download: tile.querySelector(".tile-download").getAttribute("download"),
+    })),
+  );
+}
+/** Reads every input tile's name, detail line and whether the browser could thumbnail it. */
+function sourceStates(page) {
+  return page.locator("#sourceList .tile").evaluateAll((tiles) =>
+    tiles.map((tile) => ({
+      name: tile.querySelector(".tile-name").textContent,
+      meta: tile.querySelector(".tile-meta").textContent,
+      thumbnail: tile
+        .querySelector(".tile-frame img")
+        .hasAttribute("data-loaded"),
+    })),
+  );
+}
+/** Chooses a batch of fixtures, applies the shared settings and waits for the conversion. */
+async function convertBatch(page, fixtureNames, options = {}) {
+  await page
+    .locator("#imageFile")
+    .setInputFiles(fixtureNames.map((name) => path.join(fixtures, name)));
+  await waitThumbnails(page, "#sourceList");
+  if (options.format)
+    await page.locator("#outputFormat").selectOption(options.format);
   if (options.keepExif !== undefined)
     await page.locator("#keepExif").setChecked(options.keepExif);
   if (options.quality !== undefined)
     await page.locator("#quality").fill(String(options.quality));
   await page.locator("#convertBtn").click();
-  await page
-    .locator("#imageActions")
-    .waitFor({ state: "visible", timeout: 120000 });
-  check(
-    (await page.locator("#resultName").textContent()) === expected,
-    `${fixture} to ${format}: result named ${expected}`,
-  );
-  check(
-    /^\d+ × \d+ px · /.test(await page.locator("#resultMeta").textContent()),
-    `${fixture} to ${format}: result reports its geometry`,
-  );
-  check(
-    await page.locator("#resultPreview").isVisible(),
-    `${fixture} to ${format}: preview shown`,
-  );
+  await waitBatch(page);
+  return tileStates(page);
+}
+/** Downloads one tile's result, checking the offered name, and returns the saved path. */
+async function downloadTile(page, index, expected) {
   const downloadPromise = page.waitForEvent("download");
-  await page.locator("#downloadBtn").click();
+  await page
+    .locator("#resultList .tile")
+    .nth(index)
+    .locator(".tile-download")
+    .click();
   const download = await downloadPromise;
   check(
     download.suggestedFilename() === expected,
-    `${fixture} to ${format}: download offers ${expected}`,
+    `tile ${index + 1} offers the download ${expected}`,
   );
   const file = path.join(downloads, `${++downloaded}-${expected}`);
   await download.saveAs(file);
   return file;
 }
-/** Asserts an actionable error is announced and that another attempt stays possible. */
-async function expectFailure(page, fixture, fragment) {
-  await page.locator("#imageFile").setInputFiles(path.join(fixtures, fixture));
-  await page.locator("#convertBtn").click();
-  await page
-    .locator("#message.error")
-    .waitFor({ state: "visible", timeout: 120000 });
-  const message = await page.locator("#message").textContent();
+/** Ensures input downloads retain the received filename and every byte, including metadata. */
+async function verifyInputDownload(page, index, fixture, name = fixture) {
+  const pending = page.waitForEvent("download");
+  await page.locator("#sourceList .tile-source-download").nth(index).click();
+  const download = await pending;
   check(
-    message.includes(fragment),
-    `${fixture}: "${message}" explains "${fragment}"`,
+    download.suggestedFilename() === name,
+    `input ${index + 1} retains ${name}`,
+  );
+  const file = path.join(downloads, `${++downloaded}-input-${name}`);
+  await download.saveAs(file);
+  check(
+    fs.readFileSync(file).equals(fs.readFileSync(path.join(fixtures, fixture))),
+    `input ${name} retains its exact bytes and metadata`,
+  );
+}
+/** Ensures text buttons distinguish inputs/results on touch screens and keep filename labels. */
+async function checkDownloadButtons(page) {
+  const links = await page
+    .locator(".tile-button:visible")
+    .evaluateAll((links) =>
+      links.map((link) => ({
+        label: link.getAttribute("aria-label"),
+        expected: `Download ${link.closest("#sourceList") ? "input" : "result"} ${link.download}`,
+        expectedText: link.closest("#sourceList")
+          ? "Download input"
+          : "Download result",
+        title: link.title,
+        text: link.textContent.trim(),
+        width: link.getBoundingClientRect().width,
+        height: link.getBoundingClientRect().height,
+      })),
+    );
+  check(
+    links.length === 6 &&
+      links.every(
+        (link) => link.label === link.expected && link.title === link.expected,
+      ),
+    "all input and result download buttons have filename-specific labels and tooltips",
   );
   check(
-    await page.locator("#imageActions").isHidden(),
-    `${fixture}: no result offered after failure`,
+    links.every(
+      (link) =>
+        link.text === link.expectedText &&
+        link.width >= 40 &&
+        link.height >= 40,
+    ),
+    "download buttons visibly distinguish input/result files and retain at least 40px touch targets",
+  );
+}
+/** Converts one fixture as a single-file batch and returns the downloaded file path. */
+async function convertAndDownload(page, fixture, options = {}) {
+  const format = options.format || "jpeg";
+  const extension = { jpeg: "jpg", png: "png", webp: "webp" }[format];
+  const expected = `${fixture.replace(/\.[^.]+$/, "")}.${extension}`;
+  // The resolved format is always applied: a previous case may have left another one selected.
+  const [tile] = await convertBatch(page, [fixture], { ...options, format });
+  check(tile.status === "done", `${fixture} to ${format}: converted`);
+  check(
+    tile.name === expected &&
+      tile.download === expected &&
+      /^\d+ × \d+ px · /.test(tile.meta) &&
+      tile.thumbnail,
+    `${fixture} to ${format}: tile named ${expected} reporting its geometry with a thumbnail: ${tile.meta}`,
+  );
+  check(
+    await page.locator("#resultPreview").isVisible(),
+    `${fixture} to ${format}: preview shown`,
+  );
+  return downloadTile(page, 0, expected);
+}
+/** Asserts an actionable error is announced and that another attempt stays possible. */
+async function expectFailure(page, fixture, fragment) {
+  const [tile] = await convertBatch(page, [fixture], {});
+  check(tile.status === "failed", `${fixture}: reported as failed`);
+  check(
+    tile.meta.includes(fragment),
+    `${fixture}: "${tile.meta}" explains "${fragment}"`,
+  );
+  check(tile.download === null, `${fixture}: no result offered after failure`);
+  check(
+    await page.locator("#message.error").isVisible(),
+    `${fixture}: the failure is announced`,
+  );
+  check(
+    await page.locator("#resultPreview").isHidden(),
+    `${fixture}: nothing is previewed after failure`,
   );
   check(
     !(await page.locator("#convertBtn").isDisabled()),
     `${fixture}: another attempt stays possible`,
   );
+}
+/**
+ * Drops fixtures onto the drop zone. Playwright cannot dispatch a synthetic DragEvent carrying
+ * files, so the DataTransfer and its File objects are built inside the page from the fixture bytes.
+ */
+async function dropFiles(page, fixtureNames) {
+  await page.evaluate(
+    (files) => {
+      const transfer = new DataTransfer();
+      for (const file of files)
+        transfer.items.add(
+          new File(
+            [Uint8Array.from(atob(file.base64), (byte) => byte.charCodeAt(0))],
+            file.name,
+            { type: "image/png" },
+          ),
+        );
+      document
+        .getElementById("fileDrop")
+        .dispatchEvent(
+          new DragEvent("drop", { bubbles: true, dataTransfer: transfer }),
+        );
+    },
+    fixtureNames.map((name) => ({
+      name,
+      base64: fs.readFileSync(path.join(fixtures, name)).toString("base64"),
+    })),
+  );
+}
+/** Ensures native-fallback thumbnails and conversions never share the HEIF decoder concurrently. */
+async function trackCodecCalls(page) {
+  await page.evaluate(() => {
+    window.calls = { active: 0, peak: 0, total: 0, files: [] };
+    for (const method of ["thumbnail", "convert"]) {
+      const original = ImageConverter[method];
+      ImageConverter[method] = async (file, ...rest) => {
+        window.calls.files.push(`${method}:${file.name}`);
+        window.calls.total++;
+        window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
+        try {
+          return await original(file, ...rest);
+        } finally {
+          window.calls.active--;
+        }
+      };
+    }
+  });
+}
+/**
+ * Replaces the converter with a substitute that stays pending until the test releases it, so
+ * invalidation of queued work can be observed deterministically.
+ */
+async function holdConvertCalls(page) {
+  await page.evaluate(() => {
+    window.calls = { active: 0, peak: 0, total: 0, files: [] };
+    window.pending = [];
+    ImageConverter.convert = (file) => {
+      window.calls.files.push(file.name);
+      window.calls.total++;
+      window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
+      return new Promise((resolve) =>
+        window.pending.push(() => {
+          window.calls.active--;
+          resolve({
+            blob: new Blob(["stub"], { type: "image/png" }),
+            width: 4,
+            height: 2,
+            exif: "none",
+          });
+        }),
+      );
+    };
+  });
+}
+/** Releases held conversions one at a time until the batch has settled. */
+function settleBatch(page) {
+  return page.waitForFunction(
+    () => {
+      const tiles = [...document.querySelectorAll("#resultList .tile")];
+      if (
+        tiles.length > 0 &&
+        !document.getElementById("convertBtn").disabled &&
+        tiles.every((tile) => ["done", "failed"].includes(tile.dataset.status))
+      )
+        return true;
+      const next = window.pending.shift();
+      if (next) next();
+      return false;
+    },
+    null,
+    { polling: 50, timeout: 30000 },
+  );
+}
+/** Releases the oldest held conversion, which a discarded batch must ignore. */
+function releaseConversion(page) {
+  return page.evaluate(() => {
+    const next = window.pending.shift();
+    if (next) next();
+  });
 }
 /** Ensures responsive pages have no horizontal overflow, including the result state. */
 async function noOverflow(page, width) {
@@ -194,13 +427,32 @@ async function verifyPreviewPrefix(browser, open) {
       .locator("#imageFile")
       .setInputFiles(path.join(fixtures, "photo.png"));
     await page.locator("#convertBtn").click();
-    await page
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(page, 60000);
     check(
-      (await page.locator("#resultName").textContent()) === "photo.jpg",
+      (await tileStates(page))[0].download === "photo.jpg",
       "conversion works beneath the preview prefix",
     );
+    /** Ensures the local decoder is fetched beneath the preview prefix and produces valid pixels. */
+    if (heicFixtures) {
+      const loaded = page.waitForResponse(
+        `${prefix}vendor/libheif-1.23.6/libheif-bundle.js`,
+      );
+      await page
+        .locator("#imageFile")
+        .setInputFiles(path.join(fixtures, "photo.heic"));
+      await page.locator("#convertBtn").click();
+      check((await loaded).ok(), "the preview serves its own HEIC decoder");
+      await waitBatch(page);
+      verify(
+        await downloadTile(page, 0, "photo.jpg"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--pixel",
+        "20,20,255,0,0",
+      );
+    }
     await page.locator(".brand").click();
     await page.waitForURL(/pr-preview\/99\/index\.html$/);
     check(
@@ -246,7 +498,7 @@ async function verifyPreviewPrefix(browser, open) {
     await page.locator('.tool-card[href="image-converter.html"]').click();
     await page.waitForURL(/image-converter\.html$/);
     check(
-      (await page.locator("h1").textContent()) === "Convert your image",
+      (await page.locator("h1").textContent()) === "Convert your images",
       "the converter has its own URL and heading",
     );
     check(
@@ -397,6 +649,16 @@ async function verifyPreviewPrefix(browser, open) {
           );
         }
     if (heicFixtures) {
+      /** Guards against magenta/green blocks from incorrect 10-bit 4:4:4 chroma scaling. */
+      verify(
+        await convertAndDownload(page, "scaling-list.heic", { format: "png" }),
+        "--format",
+        "PNG",
+        "--size",
+        "256x128",
+        "--reference",
+        path.join(fixtures, "scaling-list-reference.png"),
+      );
       // The core HEIC-to-JPG case, decoded by the lazily downloaded WebAssembly decoder.
       verify(
         await convertAndDownload(page, "photo.heic"),
@@ -464,16 +726,23 @@ async function verifyPreviewPrefix(browser, open) {
       const retained = await convertAndDownload(page, "real.heic", {
         keepExif: true,
       });
-      python([
-        path.join(__dirname, "verify_real_heic.py"),
-        realHeic,
-        retained,
-        "--keep-exif",
-      ]);
+      const metadata = JSON.parse(
+        python([
+          path.join(__dirname, "verify_real_heic.py"),
+          realHeic,
+          retained,
+          "--keep-exif",
+        ]),
+      );
       verified++;
+      /** Ensures the tile describes actual source metadata rather than implying GPS coverage. */
       check(
-        true,
-        "a real HEIC photo keeps its EXIF, including GPS, when that is requested",
+        (await tileStates(page))[0].meta.includes(
+          metadata.source_has_exif ? "EXIF kept" : "no EXIF in the source",
+        ),
+        metadata.source_has_exif
+          ? "a tagged real HEIC retains its source EXIF when requested"
+          : "a real HEIC without source EXIF gains none when retention is requested",
       );
       await page.locator("#keepExif").setChecked(false);
     }
@@ -500,7 +769,7 @@ async function verifyPreviewPrefix(browser, open) {
         path.join(fixtures, "gps.jpg"),
       );
     check(
-      (await page.locator("#resultMeta").textContent()).includes("EXIF kept"),
+      (await tileStates(page))[0].meta.includes("EXIF kept"),
       "the result reports the retained EXIF",
     );
     if (heicFixtures)
@@ -531,19 +800,37 @@ async function verifyPreviewPrefix(browser, open) {
     // A source without EXIF says so instead of quietly claiming to have kept it.
     await convertAndDownload(page, "photo.png", { keepExif: true });
     check(
-      (await page.locator("#resultMeta").textContent()).includes(
-        "no EXIF in the source",
-      ),
+      (await tileStates(page))[0].meta.includes("no EXIF in the source"),
       "a source without EXIF is reported rather than implied",
     );
     check(
-      await page.locator("#imageActions").isVisible(),
+      await page.locator("#batchPanel").isVisible(),
       "a result is shown before the setting changes",
     );
     await page.locator("#keepExif").setChecked(false);
+    const cleared = await tileStates(page);
     check(
-      await page.locator("#imageActions").isHidden(),
+      cleared.length === 1 &&
+        cleared[0].status === "ready" &&
+        cleared[0].download === null &&
+        (await page.locator("#resultPreview").getAttribute("src")) === null,
       "changing the EXIF setting clears the result it no longer describes",
+    );
+
+    /** Ensures invalidation clears stale labels as well as the unavailable result URL. */
+    check(
+      await page
+        .locator("#resultList .tile-download")
+        .evaluateAll((links) =>
+          links.every(
+            (link) =>
+              link.hidden &&
+              ["href", "download", "title", "aria-label"].every(
+                (name) => !link.hasAttribute(name),
+              ),
+          ),
+        ),
+      "invalidated output downloads retain no URL, filename, tooltip or accessible name",
     );
 
     // Quality reaches the lossy encoders and is hidden for lossless output.
@@ -574,6 +861,36 @@ async function verifyPreviewPrefix(browser, open) {
       "notes.txt",
       "Choose a HEIC, JPEG, PNG or WebP image",
     );
+    /** Ensures sequence and layered major brands fail with distinct reasons before decoder loading. */
+    const sequencePage = await open();
+    let sequenceDecoderRequests = 0;
+    sequencePage.on("request", (request) => {
+      if (decoderURL.test(request.url())) sequenceDecoderRequests++;
+    });
+    await sequencePage.goto(converterURL);
+    for (const fixture of ["anim-hevc.heic", "anim-msf1.heic"])
+      await expectFailure(
+        sequencePage,
+        fixture,
+        "Animated images are not supported",
+      );
+    await expectFailure(
+      sequencePage,
+      "layered-heis.heic",
+      "uses layered (L-HEVC) encoding",
+    );
+    /** Ensures a non-HEIF container is refused as unsupported instead of reaching the decoder. */
+    await expectFailure(
+      sequencePage,
+      "mp4-compat.heic",
+      "Choose a HEIC, JPEG, PNG or WebP image",
+    );
+    check(
+      sequenceDecoderRequests === 0,
+      "rejected sequences, layered stills and non-HEIF containers never load the decoder",
+    );
+    await sequencePage.close();
+
     await expectFailure(page, "anim.gif", "Choose a HEIC, JPEG, PNG or WebP");
     await expectFailure(page, "anim.webp", "Animated images are not supported");
     /** Ensures a valid unknown WebP chunk cannot silently discard the animation's frames. */
@@ -583,8 +900,30 @@ async function verifyPreviewPrefix(browser, open) {
       "Animated images are not supported",
     );
     await expectFailure(page, "anim.png", "Animated images are not supported");
-    /** Ensures multi-picture JPEGs are rejected instead of losing every image after the first. */
-    await expectFailure(page, "multi.mpo", "holds 2 images");
+    /** Ensures a multi-picture JPEG exports the first picture and keeps its notice after a batch. */
+    const multiResults = await convertBatch(page, ["multi.mpo", "photo.png"]);
+    check(
+      multiResults[0].status === "done" &&
+        multiResults[0].meta.includes(
+          "This file holds 2 images. Only the first image was kept.",
+        ) &&
+        !multiResults[1].meta.includes("Only the first"),
+      "the multi-picture notice belongs to its result and survives later batch conversions",
+    );
+    verify(
+      await downloadTile(page, 0, "multi.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "640x400",
+      "--pixel",
+      "30,30,255,0,0",
+    );
+    await page.locator("#quality").fill("85");
+    check(
+      !(await tileStates(page))[0].meta.includes("Only the first"),
+      "invalidating a result clears its first-image notice",
+    );
     /** Ensures a real native bitmap rejected by the pixel limit releases its decoded memory. */
     await page.evaluate(() => {
       window.bitmapCloses = 0;
@@ -604,8 +943,34 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await expectFailure(page, "oversize.jpg", "MB limit");
     if (heicFixtures) {
-      await expectFailure(page, "multi.heic", "holds 2 images");
+      /** Ensures a HEIF collection exports only its first image with a persistent notice. */
+      verify(
+        await convertAndDownload(page, "multi.heic"),
+        "--format",
+        "JPEG",
+        "--size",
+        "320x200",
+        "--pixel",
+        "30,30,0,0,255",
+      );
+      check(
+        (await tileStates(page))[0].meta.includes(
+          "This file holds 2 images. Only the first image was kept.",
+        ),
+        "a multi-image HEIF result reports that only its first image was kept",
+      );
       await expectFailure(page, "corrupt.heic", "could not be read");
+      await expectFailure(page, "truncated-ftyp.heic", "could not be read");
+      /** Ensures a decodable still remains supported despite a compatible sequence brand. */
+      verify(
+        await convertAndDownload(page, "still-compatible.heic"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--pixel",
+        "20,20,255,0,0",
+      );
       /** Ensures unsupported HDR colours fail explicitly instead of exporting mislabelled sRGB. */
       await expectFailure(page, "hdr.heic", "colour space is not supported");
       /** Ensures a valid Gray ICC profile is rejected and the HEIC decoder stays usable. */
@@ -627,6 +992,321 @@ async function verifyPreviewPrefix(browser, open) {
       "200x150",
     );
 
+    /** Ensures downloads expose the received JPEG and HEIC without conversion or EXIF removal. */
+    const inputFixtures = ["gps.jpg", ...(realHeic ? ["real.heic"] : [])];
+    await page.locator("#imageFile").setInputFiles(
+      inputFixtures.map((name) => ({
+        name: name === "gps.jpg" ? "IMG_0308.jpg" : name,
+        mimeType: name.endsWith(".jpg") ? "image/jpeg" : "image/heic",
+        buffer: fs.readFileSync(path.join(fixtures, name)),
+      })),
+    );
+    for (const [index, fixture] of inputFixtures.entries())
+      await verifyInputDownload(
+        page,
+        index,
+        fixture,
+        index === 0 ? "IMG_0308.jpg" : fixture,
+      );
+    await page.locator("#keepExif").setChecked(false);
+    await page.locator("#outputFormat").selectOption("png");
+    await verifyInputDownload(page, 0, "gps.jpg", "IMG_0308.jpg");
+
+    // Batch behavior: shared settings, selection order, per-file failures and unique names.
+    const shared = await convertBatch(
+      page,
+      ["photo.jpg", "photo.png", "photo.webp"],
+      { format: "png" },
+    );
+    const sources = await sourceStates(page);
+    check(
+      sources.map((tile) => tile.name).join() ===
+        "photo.jpg,photo.png,photo.webp",
+      "the input gallery lists the selected files in order",
+    );
+    check(
+      sources.map((tile) => tile.meta.split(" · ")[0]).join("|") ===
+        "640 × 400 px|200 × 150 px|300 × 200 px" &&
+        sources.every((tile) => tile.thumbnail),
+      `each input tile thumbnails its own source and reports its geometry: ${sources.map((tile) => tile.meta)}`,
+    );
+    check(
+      sources.every((tile) => / · \d+(\.\d+)? [KM]B$/.test(tile.meta)),
+      "each input tile reports the size of its own source file",
+    );
+    check(
+      shared.every((tile) => tile.status === "done" && tile.thumbnail),
+      "one action converts every selected file into a thumbnailed result",
+    );
+    check(
+      shared.map((tile) => tile.name).join() ===
+        "photo.png,photo-2.png,photo-3.png",
+      "each result tile is named after the file it downloads",
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "Converted 3 images",
+      "the batch reports how many images converted",
+    );
+    check(
+      (await page.locator("#message.success").textContent()).includes(
+        "3 converted images are ready to download",
+      ),
+      "a finished batch is announced",
+    );
+    // PNG output makes all three names collide, so the batch allocates distinct suffixes while
+    // each download keeps the pixels of the source it came from.
+    verify(
+      await downloadTile(page, 0, "photo.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "640x400",
+    );
+    verify(
+      await downloadTile(page, 1, "photo-2.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "200x150",
+    );
+    verify(
+      await downloadTile(page, 2, "photo-3.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "300x200",
+    );
+
+    for (const [index, fixture] of [
+      "photo.jpg",
+      "photo.png",
+      "photo.webp",
+    ].entries())
+      await verifyInputDownload(page, index, fixture);
+    await checkDownloadButtons(page);
+    if (screenshotDir) {
+      await page.screenshot({
+        path: path.join(screenshotDir, "image-input-downloads-1440.png"),
+        fullPage: true,
+      });
+    }
+
+    // A source that already carries a suffix occupies that output name, so a colliding name
+    // must skip past it instead of offering two downloads with the same name.
+    fs.copyFileSync(
+      path.join(fixtures, "photo.png"),
+      path.join(fixtures, "photo-2.png"),
+    );
+    const suffixed = await convertBatch(
+      page,
+      ["photo-2.png", "photo.png", "photo.jpg"],
+      { format: "jpeg" },
+    );
+    check(
+      suffixed.map((tile) => tile.download).join() ===
+        "photo-2.jpg,photo.jpg,photo-3.jpg",
+      `allocated names skip a suffix another source already used: ${suffixed.map((tile) => tile.download)}`,
+    );
+    verify(
+      await downloadTile(page, 2, "photo-3.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "640x400",
+    );
+
+    // An invalid file fails on its own tile without discarding its valid siblings.
+    const mixed = await convertBatch(
+      page,
+      ["photo.png", "notes.txt", "anim.gif", "alpha.png"],
+      { format: "jpeg" },
+    );
+    check(
+      mixed.map((tile) => tile.status).join() === "done,failed,failed,done",
+      `valid files around invalid ones still convert: ${mixed.map((tile) => tile.status)}`,
+    );
+    check(
+      mixed[1].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
+        mixed[2].meta.includes("Choose a HEIC, JPEG, PNG or WebP image") &&
+        mixed[1].download === null &&
+        mixed[2].download === null,
+      "each rejected file explains itself and offers no converted download",
+    );
+    /** Ensures a failed conversion leaves the received file available for debugging. */
+    await verifyInputDownload(page, 1, "notes.txt");
+    const mixedSources = await sourceStates(page);
+    // An animated GIF still thumbnails, because the browser renders its first frame even though
+    // the converter rejects the file; only a file no decoder can read keeps the placeholder.
+    check(
+      mixedSources.map((tile) => tile.thumbnail).join() ===
+        "true,false,true,true" && mixedSources[1].meta === "1 KB",
+      `a file the browser cannot render keeps its placeholder and reports only its size: ${mixedSources.map((tile) => tile.meta)}`,
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "Converted 2 of 4, 2 images failed",
+      "the batch reports its success and failure counts",
+    );
+    check(
+      (await page.locator("#message.error").textContent()).includes(
+        "2 of 4 images could not be converted",
+      ),
+      "a partially failed batch is announced as an error",
+    );
+    verify(
+      await downloadTile(page, 0, "photo.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "200x150",
+    );
+    verify(
+      await downloadTile(page, 3, "alpha.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "120x90",
+      "--transparency",
+      "none",
+      "--pixel",
+      "30,30,255,127,127",
+    );
+
+    // An empty file is reported on its own tile instead of blocking the rest of the batch.
+    fs.writeFileSync(path.join(fixtures, "empty.png"), "");
+    const [empty] = await convertBatch(page, ["empty.png"], {});
+    check(
+      empty.status === "failed" && empty.meta.includes("non-empty image file"),
+      `an empty file explains itself: ${empty.meta}`,
+    );
+
+    // A batch in which nothing converts still explains every file.
+    const none = await convertBatch(page, ["notes.txt", "anim.webp"], {});
+    check(
+      none.every((tile) => tile.status === "failed" && tile.download === null),
+      "no download is offered when every file fails",
+    );
+    check(
+      none[1].meta.includes("Animated images are not supported"),
+      "an animated file keeps its own reason inside a batch",
+    );
+    check(
+      (await page.locator("#batchSummary").textContent()) ===
+        "None of the 2 images converted",
+      "an entirely failed batch says so",
+    );
+
+    // One shared quality and one shared EXIF setting reach every file in the batch.
+    const sizes = {};
+    for (const quality of [50, 100]) {
+      await convertBatch(page, ["photo.jpg", "photo.webp"], {
+        format: "jpeg",
+        quality,
+        keepExif: false,
+      });
+      sizes[quality] = [
+        fs.statSync(await downloadTile(page, 0, "photo.jpg")).size,
+        fs.statSync(await downloadTile(page, 1, "photo-2.jpg")).size,
+      ];
+    }
+    check(
+      sizes[100].every((size, index) => size > sizes[50][index]),
+      `the shared quality reaches every file in the batch: ${JSON.stringify(sizes)}`,
+    );
+    await convertBatch(page, ["gps.jpg", "gps-marker-fill.jpg"], {
+      format: "jpeg",
+      keepExif: true,
+    });
+    check(
+      (await tileStates(page)).every((tile) => tile.meta.includes("EXIF kept")),
+      "the shared EXIF setting is reported for every file",
+    );
+    verify(
+      await downloadTile(page, 0, "gps.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "300x600",
+      "--exif-from",
+      path.join(fixtures, "gps.jpg"),
+    );
+    verify(
+      await downloadTile(page, 1, "gps-marker-fill.jpg"),
+      "--format",
+      "JPEG",
+      "--size",
+      "300x600",
+      "--exif-from",
+      path.join(fixtures, "gps-marker-fill.jpg"),
+    );
+
+    // One preview panel is shared, so choosing another result replaces what it shows.
+    await convertBatch(page, ["photo.jpg", "alpha.png"], {
+      format: "png",
+      keepExif: false,
+    });
+    const tiles = page.locator("#resultList .tile");
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "photo.png",
+      ) && (await tiles.first().getAttribute("data-preview")) === "",
+      "the first result is previewed without a click and marked",
+    );
+    await tiles.nth(1).locator(".tile-frame").click();
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "alpha.png",
+      ) &&
+        (await tiles.first().getAttribute("data-preview")) === null &&
+        (await tiles.nth(1).getAttribute("data-preview")) === "",
+      "previewing another result moves the single preview panel",
+    );
+
+    // Drag-and-drop accepts the same batch as the picker, in drop order.
+    await dropFiles(page, ["photo.png", "alpha.png"]);
+    await waitThumbnails(page, "#sourceList");
+    const dropped = await tileStates(page);
+    check(
+      dropped.map((tile) => tile.name).join() === "photo.png,alpha.png" &&
+        dropped.every((tile) => tile.status === "ready"),
+      "dropping several files replaces the batch in drop order",
+    );
+    check(
+      (await sourceStates(page))
+        .map((tile) => `${tile.name}:${tile.thumbnail}`)
+        .join() === "photo.png:true,alpha.png:true",
+      "dropped files fill the input gallery too",
+    );
+    await page.locator("#convertBtn").click();
+    await waitBatch(page);
+    verify(
+      await downloadTile(page, 1, "alpha.png"),
+      "--format",
+      "PNG",
+      "--size",
+      "120x90",
+      "--transparency",
+      "kept",
+      "--pixel",
+      "5,5,0,0,0,0",
+    );
+
+    // Choosing a single file keeps the singular wording and one tile per gallery.
+    await page
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "photo.png"));
+    check(
+      (await page.locator("#fileName").textContent()) === "1 image chosen" &&
+        (await page.locator("#convertLabel").textContent()) ===
+          "Convert image" &&
+        (await page.locator("#batchSummary").textContent()) ===
+          "1 image ready to convert" &&
+        (await page.locator("#sourceList .tile").count()) === 1 &&
+        (await page.locator("#resultList .tile").count()) === 1,
+      "single-file use stays as straightforward as before",
+    );
+
     // Keyboard operation.
     await page.goto(converterURL);
     await page.locator("#imageFile").focus();
@@ -638,13 +1318,72 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await page
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "alpha.png"),
+      ]);
     await page.locator("#convertBtn").focus();
+    check(
+      (await page.locator("#convertLabel").textContent()) ===
+        "Convert 2 images",
+      "the submit button names the batch it will convert",
+    );
     await page.keyboard.press("Enter");
-    await page
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
-    check(true, "Enter on the focused button converts the image");
+    await waitBatch(page, 60000);
+    check(true, "Enter on the focused button converts the batch");
+    const keyboardTiles = page.locator("#resultList .tile");
+    await keyboardTiles.first().locator(".tile-download").focus();
+    await page.keyboard.press("Tab");
+    /** Ensures real Tab navigation reveals all sides of the preview's focus ring above its image. */
+    check(
+      await keyboardTiles
+        .nth(1)
+        .locator(".tile-frame")
+        .evaluate((frame) => {
+          const outline = getComputedStyle(frame, "::after");
+          return (
+            frame === document.activeElement &&
+            frame.matches(":focus-visible") &&
+            outline.content !== "none" &&
+            outline.position === "absolute" &&
+            outline.outlineStyle === "solid" &&
+            outline.outlineWidth === "3px" &&
+            parseFloat(outline.outlineOffset) <=
+              -parseFloat(outline.outlineWidth) &&
+            [outline.top, outline.right, outline.bottom, outline.left].every(
+              (edge) => edge === "0px",
+            )
+          );
+        }),
+      "the preview focus ring stays inside all four edges and above the thumbnail",
+    );
+    if (screenshotDir)
+      await keyboardTiles.nth(1).screenshot({
+        path: path.join(screenshotDir, "image-preview-keyboard-focus.png"),
+      });
+    await page.keyboard.press("Enter");
+    check(
+      (await page.locator("#resultPreview").getAttribute("alt")).includes(
+        "alpha.jpg",
+      ),
+      "Enter on a tile control previews that result",
+    );
+    const keyboardDownload = page.waitForEvent("download");
+    await keyboardTiles.first().locator(".tile-download").focus();
+    await page.keyboard.press("Enter");
+    check(
+      (await keyboardDownload).suggestedFilename() === "photo.jpg",
+      "Enter on a tile download saves that file",
+    );
+
+    /** Ensures input downloads are keyboard accessible independently of output controls. */
+    const keyboardInputDownload = page.waitForEvent("download");
+    await page.locator("#sourceList .tile-source-download").first().focus();
+    await page.keyboard.press("Enter");
+    check(
+      (await keyboardInputDownload).suggestedFilename() === "photo.png",
+      "Enter on an input download retains the source filename",
+    );
 
     // An unsupported encoder must fail clearly rather than relabel PNG bytes.
     await page.evaluate(() => {
@@ -654,18 +1393,15 @@ async function verifyPreviewPrefix(browser, open) {
     });
     await page.locator("#outputFormat").selectOption("webp");
     await page.locator("#convertBtn").click();
-    await page
-      .locator("#message.error")
-      .waitFor({ state: "visible", timeout: 30000 });
+    await waitBatch(page, 30000);
     check(
-      (await page.locator("#message").textContent()).includes(
-        "cannot create WebP",
-      ),
+      (await tileStates(page))[0].meta.includes("cannot create WebP"),
       "a missing WebP encoder is reported instead of returning PNG bytes",
     );
     await page.close();
 
-    // Object URLs are released on reset and on replacement.
+    // Object URLs are released on reset and on replacement. A source thumbnail belongs to the
+    // selection rather than to a conversion, so hiding the page releases only the results.
     const trackedPage = await open();
     await trackObjectURLs(trackedPage);
     await trackedPage.goto(converterURL);
@@ -673,25 +1409,30 @@ async function verifyPreviewPrefix(browser, open) {
     await trackedPage.locator("#keepExif").setChecked(true);
     await trackedPage
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "photo.jpg"),
+      ]);
+    check(
+      (await trackedPage.evaluate(() => window.urls)).created === 2,
+      "one thumbnail URL is created per selected file",
+    );
     await trackedPage.locator("#quality").fill("75");
     await trackedPage.locator("#convertBtn").click();
-    await trackedPage
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(trackedPage, 60000);
     check(
-      (await trackedPage.evaluate(() => window.urls)).created === 1,
-      "one image object URL is created per conversion",
+      (await trackedPage.evaluate(() => window.urls)).created === 4,
+      "one result URL is created per converted file",
     );
     await trackedPage.locator("#resetBtn").click();
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === 1,
-      "reset revokes the result URL",
+      (await trackedPage.evaluate(() => window.urls)).revoked === 4,
+      "reset revokes every thumbnail and result URL of the batch",
     );
     check(
       (await trackedPage.locator("#fileName").textContent()) ===
-        "Choose an image",
-      "reset clears the chosen file",
+        "Choose images",
+      "reset clears the chosen files",
     );
     check(
       (await trackedPage.locator("#outputFormat").inputValue()) === "jpeg" &&
@@ -701,76 +1442,277 @@ async function verifyPreviewPrefix(browser, open) {
       "reset restores the documented defaults",
     );
     check(
-      (await trackedPage.locator("#imageActions").isHidden()) &&
+      (await trackedPage.locator("#batchPanel").isHidden()) &&
+        (await trackedPage.locator("#resultList .tile").count()) === 0 &&
+        (await trackedPage.locator("#sourceList").isHidden()) &&
+        (await trackedPage.locator("#sourceList .tile").count()) === 0 &&
         (await trackedPage.locator("#resultPreview").getAttribute("src")) ===
           null,
-      "reset clears the stale result and its preview source",
+      "reset clears both galleries and the preview source",
     );
-    for (const fixture of ["photo.jpg", "photo.png"]) {
-      await trackedPage
-        .locator("#imageFile")
-        .setInputFiles(path.join(fixtures, fixture));
-      await trackedPage.locator("#convertBtn").click();
-      await trackedPage
-        .locator("#imageActions")
-        .waitFor({ state: "visible", timeout: 60000 });
-    }
+    await convertBatch(trackedPage, ["photo.jpg"], { keepExif: false });
+    // Replacing the selection discards a finished result and its thumbnail together.
+    await trackedPage
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "alpha.png"));
+    check(
+      (await trackedPage.evaluate(() => window.urls)).created === 7 &&
+        (await trackedPage.evaluate(() => window.urls)).revoked === 6,
+      "replacing a batch releases every URL it owned",
+    );
+    await trackedPage.locator("#convertBtn").click();
+    await waitBatch(trackedPage, 60000);
     const urls = await trackedPage.evaluate(() => window.urls);
     check(
-      urls.created === 3 && urls.revoked === 2,
-      `each replaced result releases its URL, keeping only the current one: ${JSON.stringify(urls)}`,
+      urls.created === 8 && urls.revoked === 6,
+      `only the current thumbnail and result stay live: ${JSON.stringify(urls)}`,
     );
     await trackedPage.evaluate(() =>
       window.dispatchEvent(new PageTransitionEvent("pagehide")),
     );
     check(
-      (await trackedPage.evaluate(() => window.urls)).revoked === urls.created,
-      "leaving the page releases the remaining result URL",
+      (await trackedPage.evaluate(() => window.urls)).revoked === 7 &&
+        (await trackedPage.locator("#sourceList .tile").count()) === 1,
+      "leaving the page releases the result but keeps the chosen file's thumbnail",
     );
     await trackedPage.close();
 
+    // A held converter substitute shows what invalidation must do to queued work: the stale batch
+    // stops after its active file, never creates a result URL, and never overlaps the next one.
+    const heldPage = await open();
+    await trackObjectURLs(heldPage);
+    await heldPage.goto(converterURL);
+    await holdConvertCalls(heldPage);
+    await heldPage
+      .locator("#imageFile")
+      .setInputFiles([
+        path.join(fixtures, "photo.png"),
+        path.join(fixtures, "alpha.png"),
+      ]);
+    await heldPage.locator("#convertBtn").click();
+    await heldPage
+      .locator('.tile[data-status="converting"]')
+      .waitFor({ timeout: 30000 });
+    check(
+      (await heldPage.locator("#batchSummary").textContent()) ===
+        "Converting image 1 of 2…" &&
+        (await heldPage.locator("#convertBtn").isDisabled()),
+      "a running batch reports its progress and blocks a second submission",
+    );
+    // A setting change discards the pending batch; resubmitting queues behind the active call.
+    await heldPage.locator("#quality").fill("55");
+    check(
+      (await tileStates(heldPage)).every((tile) => tile.status === "ready"),
+      "a setting change clears the statuses of the batch it invalidates",
+    );
+    await heldPage.locator("#convertBtn").click();
+    await settleBatch(heldPage);
+    const held = await heldPage.evaluate(() => window.calls);
+    check(
+      held.peak === 1,
+      `the resubmitted batch waits for the active conversion instead of overlapping it: ${JSON.stringify(held)}`,
+    );
+    check(
+      held.files.join() === "photo.png,photo.png,alpha.png" && held.total === 3,
+      `the stale batch stops after the file it was already converting: ${held.files}`,
+    );
+    check(
+      (await tileStates(heldPage)).map((tile) => tile.status).join() ===
+        "done,done" &&
+        (await heldPage.evaluate(() => window.urls)).created === 4,
+      "only the resubmitted batch produces results",
+    );
+    // Reset during a pending conversion discards the late result instead of showing it.
+    await heldPage.locator("#resetBtn").click();
+    await heldPage
+      .locator("#imageFile")
+      .setInputFiles(path.join(fixtures, "photo.png"));
+    await heldPage.locator("#convertBtn").click();
+    await heldPage
+      .locator('.tile[data-status="converting"]')
+      .waitFor({ timeout: 30000 });
+    await heldPage.locator("#resetBtn").click();
+    check(
+      (await heldPage.locator("#batchPanel").isHidden()) &&
+        !(await heldPage.locator("#convertBtn").isDisabled()),
+      "reset clears a pending batch and allows another one",
+    );
+    await releaseConversion(heldPage);
+    await heldPage.waitForTimeout(500);
+    const heldUrls = await heldPage.evaluate(() => window.urls);
+    check(
+      (await heldPage.locator("#batchPanel").isHidden()) &&
+        (await heldPage.evaluate(() => window.calls)).total === 4 &&
+        heldUrls.created === 5 &&
+        heldUrls.revoked === 5,
+      `a discarded conversion creates no result and leaks no URL: ${JSON.stringify(heldUrls)}`,
+    );
+    await heldPage.close();
+
     if (heicFixtures) {
-      // A pending conversion must not resurface after the file is replaced.
+      /** Ensures a stale thumbnail and its queued conversion cannot resurface or overlap replacement work. */
       const racedPage = await open();
       let releaseDecoder;
       await racedPage.route(decoderURL, async (route) => {
         await new Promise((resolve) => (releaseDecoder = resolve));
         await route.continue();
       });
+      await trackObjectURLs(racedPage);
       await racedPage.goto(converterURL);
-      await racedPage
-        .locator("#imageFile")
-        .setInputFiles(path.join(fixtures, "photo.heic"));
+      await trackCodecCalls(racedPage);
       const requested = racedPage.waitForRequest(decoderURL, {
         timeout: 30000,
       });
-      await racedPage.locator("#convertBtn").click();
+      await racedPage
+        .locator("#imageFile")
+        .setInputFiles([
+          path.join(fixtures, "photo.heic"),
+          path.join(fixtures, "photo.png"),
+        ]);
       await requested;
+      await racedPage.locator("#convertBtn").click();
       await racedPage
         .locator("#imageFile")
         .setInputFiles(path.join(fixtures, "photo.png"));
       // PNG output names the result photo.png, so a resurfacing photo.heic result is visible.
       await racedPage.locator("#outputFormat").selectOption("png");
+      const thumbnailsBefore = await racedPage.evaluate(
+        () => window.urls.created,
+      );
+      await racedPage.locator("#convertBtn").click();
       const pending = racedPage.waitForResponse(decoderURL, { timeout: 60000 });
       releaseDecoder();
       await pending;
-      await racedPage.locator("#convertBtn").click();
-      await racedPage
-        .locator("#imageActions")
-        .waitFor({ state: "visible", timeout: 60000 });
+      await waitBatch(racedPage, 60000);
+      const raced = await tileStates(racedPage);
       check(
-        (await racedPage.locator("#resultName").textContent()) === "photo.png",
-        "the replaced file's conversion is the one shown",
+        raced.length === 1 && raced[0].download === "photo.png",
+        "the replaced batch is the one shown",
+      );
+      const racedCalls = await racedPage.evaluate(() => window.calls);
+      check(
+        racedCalls.peak === 1 &&
+          racedCalls.files.join() === "thumbnail:photo.heic,convert:photo.png",
+        `the queued batch waits for the HEIC decoder and the stale one stops: ${JSON.stringify(racedCalls)}`,
+      );
+      check(
+        (await racedPage.evaluate(() => window.urls)).created ===
+          thumbnailsBefore + 1,
+        "the discarded HEIC preview and conversion create no object URLs",
       );
       // Give the discarded HEIC conversion time to finish after the replacement.
       await racedPage.waitForTimeout(4000);
       check(
-        (await racedPage.locator("#resultName").textContent()) === "photo.png",
+        (await tileStates(racedPage))[0].download === "photo.png",
         "a conversion started before the replacement stays discarded",
       );
       await racedPage.close();
 
-      // A blocked decoder download must be reported and stay retryable.
+      /** Ensures HEIC previews load before conversion and share decoder ownership with the batch. */
+      const heicPage = await open();
+      await trackObjectURLs(heicPage);
+      await heicPage.goto(converterURL);
+      await trackCodecCalls(heicPage);
+      await heicPage
+        .locator("#imageFile")
+        .setInputFiles(
+          ["photo.heic", "gps.heic", "untagged.heic"].map((name) =>
+            path.join(fixtures, name),
+          ),
+        );
+      await waitThumbnails(heicPage, "#sourceList");
+      check(
+        (await sourceStates(heicPage)).every(
+          (tile) =>
+            tile.thumbnail &&
+            /^640 × 400 px · \d+(\.\d+)? [KM]B$/.test(tile.meta),
+        ),
+        "HEIC input previews load before Convert and report original dimensions rather than thumbnail dimensions",
+      );
+      check(
+        (await tileStates(heicPage)).every((tile) => tile.status === "ready"),
+        "generating input previews does not convert the selected files",
+      );
+      const thumbnail = heicPage.locator("#sourceList .tile-frame img").first();
+      const thumbnailURL = await thumbnail.getAttribute("src");
+      check(
+        thumbnailURL !==
+          (await heicPage
+            .locator("#sourceList .tile-source-download")
+            .first()
+            .getAttribute("href")),
+        "the HEIC preview has its own URL, leaving the original download untouched",
+      );
+      const previewBytes = await thumbnail.evaluate(async (image) =>
+        Array.from(
+          new Uint8Array(await (await fetch(image.src)).arrayBuffer()),
+        ),
+      );
+      const previewFile = path.join(downloads, "heic-input-preview.png");
+      fs.writeFileSync(previewFile, Buffer.from(previewBytes));
+      verify(
+        previewFile,
+        "--format",
+        "PNG",
+        "--size",
+        "512x320",
+        "--pixel",
+        "20,20,255,0,0",
+      );
+      await verifyInputDownload(heicPage, 0, "photo.heic");
+      /** Ensures settings and page hiding preserve previews owned by the current selection. */
+      await heicPage.locator("#keepExif").setChecked(true);
+      await heicPage.locator("#quality").fill("75");
+      await heicPage.evaluate(() =>
+        window.dispatchEvent(new PageTransitionEvent("pagehide")),
+      );
+      check(
+        (await thumbnail.getAttribute("src")) === thumbnailURL &&
+          (await sourceStates(heicPage)).every((tile) => tile.thumbnail) &&
+          (await heicPage.evaluate(() => window.urls)).revoked === 0,
+        "setting changes and page hiding keep the selected HEIC previews and original downloads alive",
+      );
+      await heicPage.locator("#convertBtn").click();
+      await waitBatch(heicPage);
+      const heicBatch = await tileStates(heicPage);
+      check(
+        heicBatch.every((tile) => tile.status === "done" && tile.thumbnail),
+        "a batch of HEIC photos converts through the shared decoder",
+      );
+      check(
+        (await sourceStates(heicPage)).every((tile) =>
+          /^640 × 400 px · \d+(\.\d+)? [KM]B$/.test(tile.meta),
+        ),
+        "conversion preserves the original geometry already shown by the HEIC input preview",
+      );
+      const heicCalls = await heicPage.evaluate(() => window.calls);
+      check(
+        heicCalls.peak === 1 &&
+          heicCalls.total === 6 &&
+          heicCalls.files.filter((file) => file.startsWith("thumbnail:"))
+            .length === 3,
+        `HEIC thumbnails and conversions never overlap or regenerate on setting changes: ${JSON.stringify(heicCalls)}`,
+      );
+      verify(
+        await downloadTile(heicPage, 1, "gps.jpg"),
+        "--format",
+        "JPEG",
+        "--size",
+        "640x400",
+        "--exif-from",
+        path.join(fixtures, "gps.heic"),
+      );
+      /** Ensures reset releases both fallback previews and originals, including converted results. */
+      await heicPage.locator("#resetBtn").click();
+      const heicURLs = await heicPage.evaluate(() => window.urls);
+      check(
+        heicURLs.created === heicURLs.revoked &&
+          (await heicPage.locator("#sourceList .tile").count()) === 0,
+        `reset releases every HEIC preview, source and result URL: ${JSON.stringify(heicURLs)}`,
+      );
+      await heicPage.close();
+
+      /** Ensures a failed preview does not prevent input downloads, a clear conversion error or a later retry. */
       const blockedPage = await open();
       await blockedPage.route(decoderURL, (route) => route.abort());
       await blockedPage.goto(converterURL);
@@ -779,6 +1721,11 @@ async function verifyPreviewPrefix(browser, open) {
         "photo.heic",
         "HEIC decoder could not load",
       );
+      check(
+        !(await sourceStates(blockedPage))[0].thumbnail,
+        "a decoder download failure leaves the input placeholder without an uncaught error",
+      );
+      await verifyInputDownload(blockedPage, 0, "photo.heic");
       await blockedPage.unroute(decoderURL);
       verify(
         await convertAndDownload(blockedPage, "photo.heic"),
@@ -787,7 +1734,16 @@ async function verifyPreviewPrefix(browser, open) {
         "--size",
         "640x400",
       );
-      check(true, "a retry after the decoder CDN recovers converts the photo");
+      // Chromium does not fire change for the same selected file; clear it to exercise a new preview.
+      await blockedPage.locator("#resetBtn").click();
+      await blockedPage
+        .locator("#imageFile")
+        .setInputFiles(path.join(fixtures, "photo.heic"));
+      await waitThumbnails(blockedPage, "#sourceList");
+      check(
+        (await sourceStates(blockedPage))[0].thumbnail,
+        "reselection after the decoder download recovers restores the HEIC preview before conversion",
+      );
       await blockedPage.close();
     }
 
@@ -808,15 +1764,65 @@ async function verifyPreviewPrefix(browser, open) {
     );
     await mobilePage.goto(converterURL);
     await noOverflow(mobilePage, 375);
+    // A long filename must wrap inside its tile instead of widening the page.
+    const longName = `${"holiday-photo-".repeat(9)}1.png`;
+    fs.copyFileSync(
+      path.join(fixtures, "photo.png"),
+      path.join(fixtures, longName),
+    );
     await mobilePage
       .locator("#imageFile")
-      .setInputFiles(path.join(fixtures, "photo.png"));
+      .setInputFiles([
+        path.join(fixtures, longName),
+        path.join(fixtures, "alpha.png"),
+        path.join(fixtures, "photo.jpg"),
+      ]);
     await noOverflow(mobilePage, 375);
+    await waitThumbnails(mobilePage, "#sourceList");
+    check(
+      (await mobilePage.locator("#convertLabel").textContent()) ===
+        "Convert 3 images" &&
+        (await mobilePage.locator("#sourceList .tile").count()) === 3,
+      "a batch is announced as such and thumbnailed on a narrow screen",
+    );
+    check(
+      await mobilePage
+        .locator(".tile")
+        .evaluateAll((tiles) =>
+          tiles.every(
+            (tile) =>
+              tile.scrollWidth <= tile.clientWidth + 1 &&
+              tile.querySelector(".tile-name").scrollWidth <=
+                tile.querySelector(".tile-name").clientWidth + 1,
+          ),
+        ),
+      "a long filename wraps inside its tile instead of widening it",
+    );
+    /** Ensures input downloads remain usable and preserve bytes on a narrow screen. */
+    await verifyInputDownload(mobilePage, 1, "alpha.png");
+    check(
+      await mobilePage
+        .locator(".tile-source-download")
+        .evaluateAll((links) =>
+          links.every((link) => link.getBoundingClientRect().height >= 40),
+        ),
+      "input downloads retain a touch-sized target on mobile",
+    );
     await mobilePage.locator("#convertBtn").tap();
-    await mobilePage
-      .locator("#imageActions")
-      .waitFor({ state: "visible", timeout: 60000 });
+    await waitBatch(mobilePage, 60000);
     await noOverflow(mobilePage, 375);
+    check(
+      (await tileStates(mobilePage)).every(
+        (tile) => tile.status === "done" && tile.thumbnail,
+      ) &&
+        (await mobilePage
+          .locator("#resultList .tile")
+          .first()
+          .locator(".tile-download")
+          .isVisible()),
+      "every result keeps its thumbnail and download control on a narrow screen",
+    );
+    await checkDownloadButtons(mobilePage);
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await mobilePage.screenshot({
@@ -838,7 +1844,7 @@ async function verifyPreviewPrefix(browser, open) {
     check(uploads.length === 0, `no file bytes are uploaded: ${uploads}`);
     check(pageErrors.length === 0, `no page errors: ${pageErrors}`);
     console.log(
-      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "not supplied through TEST_HEIC"}.`,
+      `Passed ${checks} image converter assertions and independently verified ${verified} images with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "skipped, pillow-heif unavailable"}.`,
     );
   } finally {
     await browser.close();

@@ -1,8 +1,24 @@
 "use strict";
 const el = (id) => document.getElementById(id);
-let selectedFile = null;
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+const STATUS_TEXT = { ready: "Ready to convert", converting: "Converting…" };
+/** Reports "1447 × 1087 px" for a source or a result, and nothing until the geometry is known. */
+const geometry = (item) =>
+  item.width ? `${item.width} × ${item.height} px` : "";
+// One entry per chosen file, in selection order. Duplicate names stay separate entries, so an
+// entry is identified by itself and its download name is allocated across the whole batch.
+// Each entry owns its two gallery tiles and the object URLs behind them, and those tiles are
+// updated in place so that activating a tile control cannot move the focus away from it.
+let entries = [];
+let previewed = null;
+let busy = false;
+// Incremented whenever the files or the settings change, so queued or in-flight work can be
+// discarded instead of writing results the user has already replaced.
 let operation = 0;
-let resultUrl = null;
+// Conversions and HEIC thumbnails share this queue: decoding releases the previous HEIF context,
+// so they must never overlap. An invalidated batch keeps the decoder until its current file
+// settles, and its stale token stops it from starting the next.
+let queue = Promise.resolve();
 
 function selectedOutput() {
   return ImageConverter.OUTPUTS.find(
@@ -10,6 +26,7 @@ function selectedOutput() {
   );
 }
 function sizeLabel(bytes) {
+  if (!bytes) return "0 KB";
   return bytes >= 1024 * 1024
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     : `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -19,123 +36,371 @@ function showMessage(message, type = "info") {
   el("message").className = `message ${type}`;
   el("message").hidden = false;
 }
-function setBusy(busy) {
-  el("convertBtn").disabled = busy;
-  el("convertBtn").textContent = busy ? "Converting…" : "Convert image →";
-  el("convertForm").setAttribute("aria-busy", String(busy));
+function submitLabel() {
+  if (busy) return "Converting…";
+  return entries.length > 1
+    ? `Convert ${entries.length} images`
+    : "Convert image";
 }
-function clearResult() {
-  operation++;
-  if (resultUrl) URL.revokeObjectURL(resultUrl);
-  resultUrl = null;
-  el("downloadBtn").removeAttribute("href");
-  el("downloadBtn").removeAttribute("download");
-  el("imageActions").hidden = true;
-  el("resultName").textContent = "";
-  el("resultMeta").textContent = "";
+function setBusy(value) {
+  busy = value;
+  el("convertBtn").disabled = value;
+  el("convertForm").setAttribute("aria-busy", String(value));
+  render();
+}
+function summaryText() {
+  const total = entries.length;
+  const done = entries.filter((entry) => entry.status === "done").length;
+  const failed = entries.filter((entry) => entry.status === "failed").length;
+  if (done + failed < total)
+    return entries.some((entry) => entry.status === "converting")
+      ? `Converting image ${done + failed + 1} of ${total}…`
+      : `${plural(total, "image")} ready to convert`;
+  if (!failed) return `Converted ${plural(done, "image")}`;
+  return done
+    ? `Converted ${done} of ${total}, ${plural(failed, "image")} failed`
+    : `None of the ${plural(total, "image")} converted`;
+}
+/** Reports the outcome of a finished batch; each tile carries its own file's reason. */
+function batchMessage(total, failed) {
+  if (!failed)
+    return total === 1
+      ? ["Your converted image is ready to download.", "success"]
+      : [`Your ${total} converted images are ready to download.`, "success"];
+  if (failed === total)
+    return total === 1
+      ? ["This image could not be converted. Its tile explains why.", "error"]
+      : [
+          `None of the ${total} images could be converted. Each tile explains why.`,
+          "error",
+        ];
+  return [
+    `${failed} of ${total} images could not be converted. The others are ready to download.`,
+    "error",
+  ];
+}
+/** Builds the tile chrome both galleries share: a thumbnail frame and a text caption. */
+function tileShell(entry, previewable, onLoad) {
+  const tile = document.createElement("li");
+  tile.className = "tile";
+  // A converted result's thumbnail doubles as its preview control, which keeps one large touch
+  // target instead of a separate button; every other tile stays a plain frame.
+  const frame = document.createElement(previewable ? "button" : "div");
+  frame.className = "tile-frame";
+  if (previewable) {
+    frame.type = "button";
+    frame.addEventListener("click", () => showPreview(entry));
+  }
+  const symbol = document.createElement("span");
+  symbol.className = "tile-symbol";
+  symbol.setAttribute("aria-hidden", "true");
+  symbol.textContent = "▣";
+  const image = document.createElement("img");
+  // The caption names the file, so the thumbnail itself is decorative. Lazy decoding keeps a
+  // large batch from holding every full-size image at once.
+  image.alt = "";
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.addEventListener("load", () => {
+    image.dataset.loaded = "";
+    onLoad?.(image);
+  });
+  const name = document.createElement("p");
+  name.className = "tile-name";
+  name.textContent = entry.file.name;
+  const meta = document.createElement("p");
+  meta.className = "tile-meta";
+  const caption = document.createElement("div");
+  caption.className = "tile-caption";
+  frame.append(symbol, image);
+  caption.append(name, meta);
+  tile.append(frame, caption);
+  return { tile, frame, image, name, meta };
+}
+function sourceTile(entry) {
+  const parts = tileShell(entry, false, (image) => {
+    // A fallback thumbnail is downscaled; preserve the original geometry reported by its decoder.
+    // Finished conversions also take precedence over native thumbnails' orientation handling.
+    if (entry.thumbnailUrl || entry.result) return;
+    entry.width = image.naturalWidth;
+    entry.height = image.naturalHeight;
+    updateEntry(entry);
+  });
+  // Try the browser first. Only failed native previews need the HEIC decoder, and the fallback
+  // must share the conversion queue because decoding releases the previous HEIF context.
+  parts.image.addEventListener(
+    "error",
+    () => {
+      parts.tile.setAttribute("aria-busy", "true");
+      const run = async () => {
+        try {
+          if (!entry.sourceUrl) return;
+          const preview = await ImageConverter.thumbnail(entry.file);
+          // Selection changes release sourceUrl; stale work must not allocate a new object URL.
+          if (!entry.sourceUrl || !preview) return;
+          entry.width = preview.width;
+          entry.height = preview.height;
+          entry.thumbnailUrl = URL.createObjectURL(preview.blob);
+          parts.image.src = entry.thumbnailUrl;
+          updateEntry(entry);
+        } catch {
+          // A failed preview leaves the original download usable. Convert reports actionable errors
+          // and can retry a transient decoder download failure independently.
+        } finally {
+          parts.tile.removeAttribute("aria-busy");
+        }
+      };
+      queue = queue.then(run, run);
+    },
+    { once: true },
+  );
+  const download = document.createElement("a");
+  download.className = "tile-button tile-source-download";
+  download.textContent = "Download input";
+  download.href = entry.sourceUrl;
+  download.download = entry.file.name;
+  download.title = `Download input ${entry.file.name}`;
+  download.setAttribute("aria-label", download.title);
+  parts.tile.append(download);
+  return parts;
+}
+function resultTile(entry) {
+  const parts = tileShell(entry, true);
+  const download = document.createElement("a");
+  download.className = "tile-button tile-download";
+  download.textContent = "Download result";
+  parts.tile.append(download);
+  parts.download = download;
+  return parts;
+}
+/** Renders one entry into both galleries. Filenames and errors are written as text only. */
+function updateEntry(entry) {
+  entry.sourceTile.meta.textContent = [
+    geometry(entry),
+    sizeLabel(entry.file.size),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const { result, error, status } = entry;
+  const tile = entry.resultTile;
+  tile.tile.dataset.status = status;
+  tile.tile.toggleAttribute("data-preview", previewed === entry);
+  tile.name.textContent = result ? result.name : entry.file.name;
+  tile.meta.textContent = result
+    ? [geometry(result), sizeLabel(result.size), result.exif, result.notice]
+        .filter(Boolean)
+        .join(" · ")
+    : error || STATUS_TEXT[status];
+  tile.frame.disabled = !result;
+  tile.download.hidden = !result;
+  if (!result) {
+    tile.image.removeAttribute("src");
+    delete tile.image.dataset.loaded;
+    tile.frame.removeAttribute("aria-label");
+    tile.download.removeAttribute("href");
+    tile.download.removeAttribute("download");
+    tile.download.removeAttribute("title");
+    tile.download.removeAttribute("aria-label");
+    return;
+  }
+  // Compared first: reassigning the same blob URL would decode the thumbnail again.
+  if (tile.image.getAttribute("src") !== result.url) {
+    delete tile.image.dataset.loaded;
+    tile.image.src = result.url;
+  }
+  tile.frame.setAttribute("aria-label", `Preview ${result.name}`);
+  tile.download.href = result.url;
+  tile.download.download = result.name;
+  tile.download.title = `Download result ${result.name}`;
+  tile.download.setAttribute("aria-label", tile.download.title);
+}
+function createTiles(entry) {
+  entry.sourceTile = sourceTile(entry);
+  entry.resultTile = resultTile(entry);
+  // Assigned last: the thumbnail's load handler renders the entry, which needs both tiles.
+  entry.sourceTile.image.src = entry.sourceUrl;
+  updateEntry(entry);
+}
+function render() {
+  for (const entry of entries) updateEntry(entry);
+  el("sourceList").hidden = !entries.length;
+  el("batchPanel").hidden = !entries.length;
+  el("batchSummary").textContent = summaryText();
+  el("convertLabel").textContent = submitLabel();
+}
+/** Releases every result URL this page owns, so replaced or discarded work cannot leak. */
+function releaseResults() {
+  for (const entry of entries)
+    if (entry.result) {
+      URL.revokeObjectURL(entry.result.url);
+      entry.result = null;
+    }
+}
+/**
+ * Source thumbnails and downloads belong to the selection, so only replacing or clearing it
+ * releases them. Hiding the page keeps them: a back/forward-cache restore would otherwise leave
+ * broken thumbnails and downloads for files that are still chosen.
+ */
+function releaseSources() {
+  for (const entry of entries) {
+    URL.revokeObjectURL(entry.sourceUrl);
+    if (entry.thumbnailUrl) URL.revokeObjectURL(entry.thumbnailUrl);
+    entry.sourceUrl = null;
+  }
+}
+function clearPreview() {
+  previewed = null;
   el("resultPreview").removeAttribute("src");
   el("resultPreview").hidden = true;
   el("previewEmpty").hidden = false;
   el("previewBadge").textContent = "No conversion yet";
+}
+// One large preview is shared by the batch; the tiles carry their own thumbnails.
+function showPreview(entry) {
+  previewed = entry;
+  el("resultPreview").src = entry.result.url;
+  el("resultPreview").alt =
+    `Preview of ${entry.result.name}, ${entry.result.width} by ${entry.result.height} pixels`;
+  el("resultPreview").hidden = false;
+  el("previewEmpty").hidden = true;
+  el("previewBadge").textContent = entry.result.label;
+  render();
+}
+/** Discards results and pending work: a later completion must not touch the current selection. */
+function invalidate() {
+  operation++;
+  releaseResults();
+  for (const entry of entries) {
+    entry.status = "ready";
+    entry.error = null;
+  }
+  clearPreview();
   el("message").hidden = true;
   setBusy(false);
 }
-function chooseFile(file) {
-  clearResult();
-  selectedFile = null;
-  el("fileName").textContent = "Choose an image";
-  el("fileHelp").textContent = "or drop it here";
+function chooseFiles(files) {
+  // Invalidate first: the entries being replaced still own the URLs that have to be released.
+  invalidate();
+  releaseSources();
+  entries = [...files].map((file) => ({
+    file,
+    status: "ready",
+    error: null,
+    result: null,
+    sourceUrl: URL.createObjectURL(file),
+  }));
+  entries.forEach(createTiles);
+  el("sourceList").replaceChildren(
+    ...entries.map((entry) => entry.sourceTile.tile),
+  );
+  el("resultList").replaceChildren(
+    ...entries.map((entry) => entry.resultTile.tile),
+  );
   el("imageFile").removeAttribute("aria-invalid");
-  if (!file) return;
-  if (!file.size) {
-    el("imageFile").value = "";
-    el("imageFile").setAttribute("aria-invalid", "true");
-    showMessage("Choose a non-empty image file.", "error");
-    return;
-  }
-  selectedFile = file;
-  el("fileName").textContent = file.name;
-  el("fileHelp").textContent =
-    `${sizeLabel(file.size)} · choose another file to replace it`;
+  const total = entries.reduce((sum, entry) => sum + entry.file.size, 0);
+  el("fileName").textContent = entries.length
+    ? `${plural(entries.length, "image")} chosen`
+    : "Choose images";
+  el("fileHelp").textContent = entries.length
+    ? `${sizeLabel(total)} in total · choose again to replace them`
+    : "or drop them here";
+  render();
 }
 function updateOutputFields() {
   el("qualityField").hidden = !selectedOutput().lossy;
   el("qualityValue").textContent = el("quality").value;
-  clearResult();
+  invalidate();
 }
-el("convertForm").addEventListener("submit", async (event) => {
+async function runBatch(token, batch, { output, quality, keepExif }) {
+  // Allocated once for the whole batch, so colliding source names still download distinctly.
+  const names = ImageConverter.outputNames(
+    batch.map((entry) => entry.file.name),
+    output.extension,
+  );
+  for (const [index, entry] of batch.entries()) {
+    if (token !== operation) return;
+    entry.status = "converting";
+    render();
+    try {
+      const result = await ImageConverter.convert(entry.file, output, quality, {
+        keepExif,
+        onStage: (stage) => {
+          if (token === operation && stage === "codec")
+            showMessage(
+              "Loading the HEIC decoder from this site for this page session.",
+            );
+        },
+      });
+      // Checked before the URL is created: nothing would ever revoke a stale result's URL.
+      if (token !== operation) return;
+      entry.status = "done";
+      // A completed conversion supplies authoritative geometry even if the input preview failed.
+      entry.width = result.width;
+      entry.height = result.height;
+      entry.result = {
+        url: URL.createObjectURL(result.blob),
+        name: names[index],
+        label: output.label,
+        notice:
+          result.imageCount > 1
+            ? `This file holds ${result.imageCount} images. Only the first image was kept.`
+            : "",
+        width: result.width,
+        height: result.height,
+        size: result.blob.size,
+        // Say so when the user asked to keep EXIF and the file could not carry it.
+        exif: {
+          kept: "EXIF kept",
+          none: keepExif ? "no EXIF in the source" : "",
+          "too-large": "EXIF too large to keep",
+        }[result.exif],
+      };
+      // The first result is shown large without a click; later ones leave that choice alone.
+      if (!previewed) showPreview(entry);
+    } catch (error) {
+      if (token !== operation) return;
+      entry.status = "failed";
+      entry.error = error.code
+        ? error.message
+        : "We couldn’t convert this image. Choose another file and try again.";
+    }
+    render();
+  }
+  if (token !== operation) return;
+  setBusy(false);
+  const failed = batch.filter((entry) => entry.status === "failed").length;
+  showMessage(...batchMessage(batch.length, failed));
+}
+el("convertForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!selectedFile) {
+  if (!entries.length) {
     el("imageFile").setAttribute("aria-invalid", "true");
-    showMessage("Choose an image file first.", "error");
+    showMessage("Choose at least one image file.", "error");
     return;
   }
-  clearResult();
-  const token = operation,
-    file = selectedFile,
-    output = selectedOutput(),
-    quality = Number(el("quality").value) / 100,
-    keepExif = el("keepExif").checked;
+  invalidate();
+  const token = operation;
+  const batch = [...entries];
+  const settings = {
+    output: selectedOutput(),
+    quality: Number(el("quality").value) / 100,
+    keepExif: el("keepExif").checked,
+  };
   setBusy(true);
-  showMessage("Converting your image on this device…");
-  try {
-    const result = await ImageConverter.convert(file, output, quality, {
-      keepExif,
-      onStage: (stage) => {
-        if (token === operation && stage === "codec")
-          showMessage(
-            "Loading the HEIC decoder. This one-off download happens in your browser.",
-          );
-      },
-    });
-    if (token !== operation) return;
-    resultUrl = URL.createObjectURL(result.blob);
-    const name = ImageConverter.outputName(file.name, output.extension);
-    el("downloadBtn").href = resultUrl;
-    el("downloadBtn").download = name;
-    el("resultName").textContent = name;
-    el("resultMeta").textContent = [
-      `${result.width} × ${result.height} px`,
-      output.label,
-      sizeLabel(result.blob.size),
-      // Say so when the user asked to keep EXIF and the file could not carry it.
-      {
-        kept: "EXIF kept",
-        none: keepExif ? "no EXIF in the source" : "",
-        "too-large": "EXIF too large to keep",
-      }[result.exif],
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    el("resultPreview").alt =
-      `Preview of ${name}, ${result.width} by ${result.height} pixels`;
-    el("resultPreview").src = resultUrl;
-    el("resultPreview").hidden = false;
-    el("previewEmpty").hidden = true;
-    el("previewBadge").textContent = output.label;
-    el("imageActions").hidden = false;
-    showMessage("Your converted image is ready to download.", "success");
-  } catch (error) {
-    if (token === operation)
-      showMessage(
-        error.code
-          ? error.message
-          : "We couldn’t convert this image. Choose another file and try again.",
-        "error",
-      );
-  } finally {
-    if (token === operation) setBusy(false);
-  }
+  showMessage(`Converting ${plural(batch.length, "image")} on this device…`);
+  const run = () => runBatch(token, batch, settings);
+  // Both handlers start this batch, so an earlier batch that throws cannot stall the queue.
+  queue = queue.then(run, run);
 });
 el("imageFile").addEventListener("change", () =>
-  chooseFile(el("imageFile").files[0]),
+  chooseFiles(el("imageFile").files),
 );
 el("outputFormat").addEventListener("change", updateOutputFields);
 el("quality").addEventListener("input", updateOutputFields);
-el("keepExif").addEventListener("change", clearResult);
+el("keepExif").addEventListener("change", invalidate);
 el("resetBtn").addEventListener("click", () => {
   el("convertForm").reset();
-  chooseFile(null);
+  chooseFiles([]);
   updateOutputFields();
 });
 for (const type of ["dragenter", "dragover"])
@@ -150,7 +415,7 @@ for (const type of ["dragleave", "drop"])
   });
 el("fileDrop").addEventListener("drop", (event) => {
   el("imageFile").value = "";
-  chooseFile(event.dataTransfer.files[0]);
+  chooseFiles(event.dataTransfer.files);
 });
 // The format table in the conversion module is the single source of truth for the picker, so the
 // offered options cannot drift from the formats the converter actually writes.
@@ -166,4 +431,4 @@ for (const output of ImageConverter.OUTPUTS)
     options[index].textContent = `${output.label} — unsupported here`;
   }
 })();
-window.addEventListener("pagehide", clearResult);
+window.addEventListener("pagehide", invalidate);

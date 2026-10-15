@@ -8,23 +8,23 @@ const ImageConverter = (() => {
   const TIFF_BIG = [0x4d, 0x4d, 0x00, 0x2a]; // "MM" with the same magic number
   // A JPEG application segment carries a 16-bit length that includes its own two bytes.
   const MAX_JPEG_EXIF = 0xffff - 2 - 6;
-  const HEIF_SCRIPT_URL =
-    "https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js";
-  // Every brand a HEIC photo can carry, including the sequence brands: those are rejected by the
-  // decoded-image count instead, so one message covers burst and animated HEIF files alike.
-  // AVIF is deliberately absent: its AV1 codec is not in the decoder bundle this site loads.
-  const HEIF_BRANDS = new Set([
-    "heic",
-    "heix",
-    "heim",
-    "heis",
-    "hevm",
-    "hevs",
+  const HEIF_SCRIPT_URL = "vendor/libheif-1.23.6/libheif-bundle.js";
+  const HEIF_STILL_BRANDS = new Set(["heic", "heix", "mif1", "heif"]);
+  const HEIF_SEQUENCE_BRANDS = new Set([
     "hevc",
     "hevx",
-    "mif1",
+    "hevm",
+    "hevs",
     "msf1",
-    "heif",
+  ]);
+  const HEIF_LAYERED_BRANDS = new Set(["heim", "heis"]);
+  // Every brand that can identify a HEIF file. Detection trusts the major brand alone, because
+  // compatible brands only declare extra conformance: a still photo may list a sequence profile,
+  // and a general ISO-BMFF container may list a HEIF one.
+  const HEIF_MAJOR_BRANDS = new Set([
+    ...HEIF_STILL_BRANDS,
+    ...HEIF_SEQUENCE_BRANDS,
+    ...HEIF_LAYERED_BRANDS,
   ]);
   const OUTPUTS = [
     {
@@ -109,6 +109,27 @@ const ImageConverter = (() => {
     return (crc ^ 0xffffffff) >>> 0;
   }
 
+  /** Reads complete brands within the ftyp box, retaining a readable major on truncated input. */
+  function fileTypeBrands(bytes) {
+    if (text(bytes, 4, 4) !== "ftyp") return [];
+    let length = uint32(bytes, 0);
+    let start = 8;
+    if (length === 1) {
+      if (bytes.length < 16) return [];
+      // The size only bounds a scan of this in-memory file, so even very large sizes are safe
+      // to clamp to bytes.length without relying on exact integers above Number.MAX_SAFE_INTEGER.
+      length = uint32(bytes, 8) * 2 ** 32 + uint32(bytes, 12);
+      start = 16;
+    } else if (length === 0) length = bytes.length;
+    if (length < start + 8 || bytes.length < start + 4) return [];
+    const brands = [text(bytes, start, 4)];
+    // Preserve recognition of corrupt HEIFs so the decoder can report an unreadable image.
+    const end = Math.min(length, bytes.length);
+    for (let offset = start + 8; offset + 4 <= end; offset += 4)
+      brands.push(text(bytes, offset, 4));
+    return brands;
+  }
+
   /** Returns jpeg, png, webp or heif from the file's own signature, or null when unrecognised. */
   function detectFormat(bytes) {
     if (matches(bytes, 0, [0xff, 0xd8, 0xff])) return "jpeg";
@@ -116,9 +137,13 @@ const ImageConverter = (() => {
       return "png";
     if (text(bytes, 0, 4) === "RIFF" && text(bytes, 8, 4) === "WEBP")
       return "webp";
-    if (text(bytes, 4, 4) === "ftyp" && HEIF_BRANDS.has(text(bytes, 8, 4)))
-      return "heif";
-    return null;
+    const brands = fileTypeBrands(bytes);
+    // AVIF also carries generic HEIF brands, but its AV1 codec is not in our decoder bundle.
+    if (brands.includes("avif") || brands.includes("avis")) return null;
+    // Only the major brand says what a file is. Treating compatible brands as identification
+    // would pull unrelated ISO-BMFF containers into the HEIF path, where they download the 2 MB
+    // decoder before failing inside it instead of being refused as an unsupported type.
+    return HEIF_MAJOR_BRANDS.has(brands[0]) ? "heif" : null;
   }
 
   /** Walks whole PNG chunks, stopping at a truncated one instead of reading past the file. */
@@ -157,13 +182,16 @@ const ImageConverter = (() => {
     return false;
   }
 
-  /**
-   * Reports animated inputs, which would otherwise be reduced to one frame without telling the
-   * user. Multi-image HEIF files are caught after decoding, where the frame count is known.
-   */
-  function animatedFormat(bytes, format) {
-    if (format === "png" && pngAnimated(bytes)) return "png";
-    if (format === "webp" && webpAnimated(bytes)) return "webp";
+  /** Reports the reason an otherwise recognized container cannot be decoded by this converter. */
+  function rejectedContainer(bytes, format) {
+    if (format === "png" && pngAnimated(bytes)) return "animated";
+    if (format === "webp" && webpAnimated(bytes)) return "animated";
+    if (format !== "heif") return null;
+    // The major brand is already known to be HEIF-family, because that is what detectFormat
+    // requires, so no compatible-brand fallback is reachable here.
+    const [major] = fileTypeBrands(bytes);
+    if (HEIF_SEQUENCE_BRANDS.has(major)) return "animated";
+    if (HEIF_LAYERED_BRANDS.has(major)) return "layered";
     return null;
   }
 
@@ -171,6 +199,24 @@ const ImageConverter = (() => {
   function outputName(name, extension) {
     const dot = name.lastIndexOf(".");
     return `${dot > 0 ? name.slice(0, dot) : name || "image"}${extension}`;
+  }
+
+  /**
+   * Returns one download name per source name, in order, so a batch never offers two files under
+   * the same name. Different source extensions can share one output extension, so collisions get
+   * deterministic numeric suffixes that also skip names a source already used.
+   */
+  function outputNames(names, extension) {
+    const allocated = new Set();
+    return names.map((name) => {
+      const base = outputName(name, extension);
+      const stem = base.slice(0, -extension.length);
+      let unique = base;
+      for (let index = 2; allocated.has(unique); index++)
+        unique = `${stem}-${index}${extension}`;
+      allocated.add(unique);
+      return unique;
+    });
   }
 
   /** Reads each container's EXIF framing before validating the TIFF header. */
@@ -438,7 +484,7 @@ const ImageConverter = (() => {
 
   /** Reads the Exif item a HEIC photo carries, which no browser API exposes. */
   function heifExif(heif, image) {
-    // libheif-js exposes this C API without an Embind wrapper. Its WASM32 ABI places a 12-byte
+    // libheif exposes this C API without an Embind wrapper. Its WASM32 ABI places a 12-byte
     // heif_error buffer before the documented arguments, as heifColorProfile already does.
     const handle = image.handle.$$.ptr;
     const count = heif._heif_image_handle_get_number_of_metadata_blocks(
@@ -489,13 +535,8 @@ const ImageConverter = (() => {
         "decode",
         "This HEIC file could not be read. Choose a HEIC photo and try again.",
       );
-    if (images.length > 1) {
-      for (const extra of images) extra.free();
-      throw failure(
-        "multiple",
-        `This file holds ${images.length} images. Choose a file with a single still image.`,
-      );
-    }
+    // Only the first image is exported; release the other handles before allocating its pixels.
+    for (const extra of images.slice(1)) extra.free();
     const image = images[0];
     try {
       const width = image.get_width(),
@@ -549,6 +590,7 @@ const ImageConverter = (() => {
         bitmap,
         width,
         height,
+        imageCount: images.length,
         exif: keepExif
           ? normalizeExif(heifExif(heif, image), width, height)
           : null,
@@ -559,7 +601,7 @@ const ImageConverter = (() => {
   }
 
   function heifColorProfile(heif, image) {
-    // libheif-js 1.23.5 exposes this C API without an Embind wrapper. Its WASM32 ABI uses
+    // libheif exposes this C API without an Embind wrapper. Its WASM32 ABI uses
     // a 12-byte heif_error return buffer before the explicit handle and destination arguments.
     const handle = image.handle.$$.ptr;
     const size = heif._heif_image_handle_get_raw_color_profile_size(handle);
@@ -842,12 +884,8 @@ const ImageConverter = (() => {
     return Boolean(blob) && blob.type === output.mime;
   }
 
-  /**
-   * Converts one file to the selected output format entirely on this device.
-   * The options may keep the source EXIF and may report "codec" before the decoder download.
-   */
-  async function convert(file, output, quality, options = {}) {
-    const { keepExif = false, onStage } = options;
+  /** Validates container policy and limits before either a thumbnail or conversion decodes it. */
+  async function readInput(file) {
     if (!file.size) throw failure("empty", "Choose a non-empty image file.");
     if (file.size > MAX_FILE_BYTES)
       throw failure(
@@ -861,25 +899,56 @@ const ImageConverter = (() => {
         "unsupported",
         "Choose a HEIC, JPEG, PNG or WebP image. Other file types are not supported.",
       );
-    if (animatedFormat(bytes, format))
+    const rejection = rejectedContainer(bytes, format);
+    if (rejection === "animated")
       throw failure(
         "animated",
         "Animated images are not supported. Choose a single still image.",
       );
-    if (format === "jpeg") {
-      const images = jpegImageCount(bytes);
-      if (images > 1)
-        throw failure(
-          "multiple",
-          `This file holds ${images} images. Choose a file with a single still image.`,
-        );
+    if (rejection === "layered")
+      throw failure(
+        "layered",
+        "This HEIF file uses layered (L-HEVC) encoding, which is not supported. Export a single-layer HEIC and try again.",
+      );
+    return { bytes, format };
+  }
+
+  /** Builds a small, metadata-free HEIC preview when the browser cannot display the source. */
+  async function thumbnail(file) {
+    const { bytes, format } = await readInput(file);
+    if (format !== "heif") return null;
+    const source = await decodeHeif(bytes);
+    const canvas = document.createElement("canvas");
+    try {
+      const scale = Math.min(1, 512 / Math.max(source.width, source.height));
+      canvas.width = Math.max(1, Math.round(source.width * scale));
+      canvas.height = Math.max(1, Math.round(source.height * scale));
+      canvas
+        .getContext("2d")
+        .drawImage(source.bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      return blob ? { blob, width: source.width, height: source.height } : null;
+    } finally {
+      source.bitmap.close();
+      canvas.width = canvas.height = 0;
     }
+  }
+
+  /** Converts one file, optionally keeping EXIF and reporting the decoder-loading stage. */
+  async function convert(file, output, quality, options = {}) {
+    const { keepExif = false, onStage } = options;
+    const { bytes, format } = await readInput(file);
     const source =
       format === "heif"
         ? await decodeHeif(bytes, onStage, keepExif)
         : await decodeNative(bytes, format, keepExif);
     try {
-      return await encode(source, output, quality);
+      const result = await encode(source, output, quality);
+      result.imageCount =
+        format === "jpeg" ? jpegImageCount(bytes) : source.imageCount || 1;
+      return result;
     } finally {
       source.bitmap.close();
     }
@@ -889,7 +958,7 @@ const ImageConverter = (() => {
     MAX_FILE_BYTES,
     MAX_PIXELS,
     OUTPUTS,
-    animatedFormat,
+    rejectedContainer,
     convert,
     detectFormat,
     embedExif,
@@ -898,7 +967,9 @@ const ImageConverter = (() => {
     exifTiff,
     normalizeExif,
     outputName,
+    outputNames,
     sourceExif,
+    thumbnail,
   };
 })();
 
