@@ -76,6 +76,19 @@ button:focus-visible {
 [hidden] {
   display: none !important;
 }
+/* Off-screen rather than `display: none`, which would also drop the text from the
+   accessibility tree and defeat the point of hiding only its rendering. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .skip-link {
   position: absolute;
   left: 18px;
@@ -837,6 +850,9 @@ code {
   font-weight: 650;
 }
 .notes-list {
+  /* A full-width third grid row below the format card: these explanations are long enough to
+     stretch the narrow desktop column they used to share with the table. The section's row gap
+     supplies the spacing, so the list needs no margin of its own. */
   grid-column: 1 / -1;
   margin: 0;
   padding-left: 18px;
