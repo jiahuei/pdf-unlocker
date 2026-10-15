@@ -41,7 +41,7 @@ if (realHeic && !fs.existsSync(realHeic))
   throw new Error(`TEST_HEIC does not exist: ${realHeic}`);
 if (realHeic) fs.copyFileSync(realHeic, path.join(fixtures, "real.heic"));
 
-/** Checks a real download independently with Pillow instead of trusting the success message. */
+/** Checks downloaded or preview image bytes independently with Pillow instead of trusting the UI. */
 function verify(file, ...expectations) {
   python([path.join(__dirname, "verify_image.py"), file, ...expectations]);
   verified++;
@@ -69,7 +69,9 @@ function waitThumbnails(page, list) {
         page.waitForFunction(
           (selector) =>
             [...document.querySelectorAll(`${selector} .tile-frame img`)].every(
-              (image) => image.complete,
+              (image) =>
+                image.complete &&
+                image.closest(".tile").getAttribute("aria-busy") !== "true",
             ),
           list,
           { timeout: 30000 },
@@ -275,21 +277,23 @@ async function dropFiles(page, fixtureNames) {
     })),
   );
 }
-/** Counts concurrent converter calls, which the shared HEIC decoder cannot survive. */
-async function trackConvertCalls(page) {
+/** Ensures native-fallback thumbnails and conversions never share the HEIF decoder concurrently. */
+async function trackCodecCalls(page) {
   await page.evaluate(() => {
     window.calls = { active: 0, peak: 0, total: 0, files: [] };
-    const convert = ImageConverter.convert;
-    ImageConverter.convert = async (file, ...rest) => {
-      window.calls.files.push(file.name);
-      window.calls.total++;
-      window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
-      try {
-        return await convert(file, ...rest);
-      } finally {
-        window.calls.active--;
-      }
-    };
+    for (const method of ["thumbnail", "convert"]) {
+      const original = ImageConverter[method];
+      ImageConverter[method] = async (file, ...rest) => {
+        window.calls.files.push(`${method}:${file.name}`);
+        window.calls.total++;
+        window.calls.peak = Math.max(window.calls.peak, ++window.calls.active);
+        try {
+          return await original(file, ...rest);
+        } finally {
+          window.calls.active--;
+        }
+      };
+    }
   });
 }
 /**
@@ -1546,8 +1550,7 @@ async function verifyPreviewPrefix(browser, open) {
     await heldPage.close();
 
     if (heicFixtures) {
-      // A pending conversion must not resurface after the file is replaced, and the replacement
-      // must not decode while the discarded HEIC still owns the shared decoder.
+      /** Ensures a stale thumbnail and its queued conversion cannot resurface or overlap replacement work. */
       const racedPage = await open();
       let releaseDecoder;
       await racedPage.route(decoderURL, async (route) => {
@@ -1556,18 +1559,18 @@ async function verifyPreviewPrefix(browser, open) {
       });
       await trackObjectURLs(racedPage);
       await racedPage.goto(converterURL);
-      await trackConvertCalls(racedPage);
+      await trackCodecCalls(racedPage);
+      const requested = racedPage.waitForRequest(decoderURL, {
+        timeout: 30000,
+      });
       await racedPage
         .locator("#imageFile")
         .setInputFiles([
           path.join(fixtures, "photo.heic"),
           path.join(fixtures, "photo.png"),
         ]);
-      const requested = racedPage.waitForRequest(decoderURL, {
-        timeout: 30000,
-      });
-      await racedPage.locator("#convertBtn").click();
       await requested;
+      await racedPage.locator("#convertBtn").click();
       await racedPage
         .locator("#imageFile")
         .setInputFiles(path.join(fixtures, "photo.png"));
@@ -1589,13 +1592,13 @@ async function verifyPreviewPrefix(browser, open) {
       const racedCalls = await racedPage.evaluate(() => window.calls);
       check(
         racedCalls.peak === 1 &&
-          racedCalls.files.join() === "photo.heic,photo.png",
+          racedCalls.files.join() === "thumbnail:photo.heic,convert:photo.png",
         `the queued batch waits for the HEIC decoder and the stale one stops: ${JSON.stringify(racedCalls)}`,
       );
       check(
         (await racedPage.evaluate(() => window.urls)).created ===
           thumbnailsBefore + 1,
-        "the discarded HEIC conversion creates no result URL",
+        "the discarded HEIC preview and conversion create no object URLs",
       );
       // Give the discarded HEIC conversion time to finish after the replacement.
       await racedPage.waitForTimeout(4000);
@@ -1605,10 +1608,11 @@ async function verifyPreviewPrefix(browser, open) {
       );
       await racedPage.close();
 
-      // A batch of HEIC photos reuses one decoder, so its conversions must stay serialized.
+      /** Ensures HEIC previews load before conversion and share decoder ownership with the batch. */
       const heicPage = await open();
+      await trackObjectURLs(heicPage);
       await heicPage.goto(converterURL);
-      await trackConvertCalls(heicPage);
+      await trackCodecCalls(heicPage);
       await heicPage
         .locator("#imageFile")
         .setInputFiles(
@@ -1619,11 +1623,55 @@ async function verifyPreviewPrefix(browser, open) {
       await waitThumbnails(heicPage, "#sourceList");
       check(
         (await sourceStates(heicPage)).every(
-          (tile) => !tile.thumbnail && !tile.meta.includes("px"),
+          (tile) =>
+            tile.thumbnail &&
+            /^640 × 400 px · \d+(\.\d+)? [KM]B$/.test(tile.meta),
         ),
-        "a HEIC source this browser cannot render keeps its placeholder and reports only its size",
+        "HEIC input previews load before Convert and report original dimensions rather than thumbnail dimensions",
       );
+      check(
+        (await tileStates(heicPage)).every((tile) => tile.status === "ready"),
+        "generating input previews does not convert the selected files",
+      );
+      const thumbnail = heicPage.locator("#sourceList .tile-frame img").first();
+      const thumbnailURL = await thumbnail.getAttribute("src");
+      check(
+        thumbnailURL !==
+          (await heicPage
+            .locator("#sourceList .tile-source-download")
+            .first()
+            .getAttribute("href")),
+        "the HEIC preview has its own URL, leaving the original download untouched",
+      );
+      const previewBytes = await thumbnail.evaluate(async (image) =>
+        Array.from(
+          new Uint8Array(await (await fetch(image.src)).arrayBuffer()),
+        ),
+      );
+      const previewFile = path.join(downloads, "heic-input-preview.png");
+      fs.writeFileSync(previewFile, Buffer.from(previewBytes));
+      verify(
+        previewFile,
+        "--format",
+        "PNG",
+        "--size",
+        "512x320",
+        "--pixel",
+        "20,20,255,0,0",
+      );
+      await verifyInputDownload(heicPage, 0, "photo.heic");
+      /** Ensures settings and page hiding preserve previews owned by the current selection. */
       await heicPage.locator("#keepExif").setChecked(true);
+      await heicPage.locator("#quality").fill("75");
+      await heicPage.evaluate(() =>
+        window.dispatchEvent(new PageTransitionEvent("pagehide")),
+      );
+      check(
+        (await thumbnail.getAttribute("src")) === thumbnailURL &&
+          (await sourceStates(heicPage)).every((tile) => tile.thumbnail) &&
+          (await heicPage.evaluate(() => window.urls)).revoked === 0,
+        "setting changes and page hiding keep the selected HEIC previews and original downloads alive",
+      );
       await heicPage.locator("#convertBtn").click();
       await waitBatch(heicPage);
       const heicBatch = await tileStates(heicPage);
@@ -1635,12 +1683,15 @@ async function verifyPreviewPrefix(browser, open) {
         (await sourceStates(heicPage)).every((tile) =>
           /^640 × 400 px · \d+(\.\d+)? [KM]B$/.test(tile.meta),
         ),
-        "the conversion gives a HEIC input tile the geometry its browser could not report",
+        "conversion preserves the original geometry already shown by the HEIC input preview",
       );
       const heicCalls = await heicPage.evaluate(() => window.calls);
       check(
-        heicCalls.peak === 1 && heicCalls.total === 3,
-        `repeated HEIC conversions never overlap: ${JSON.stringify(heicCalls)}`,
+        heicCalls.peak === 1 &&
+          heicCalls.total === 6 &&
+          heicCalls.files.filter((file) => file.startsWith("thumbnail:"))
+            .length === 3,
+        `HEIC thumbnails and conversions never overlap or regenerate on setting changes: ${JSON.stringify(heicCalls)}`,
       );
       verify(
         await downloadTile(heicPage, 1, "gps.jpg"),
@@ -1651,9 +1702,17 @@ async function verifyPreviewPrefix(browser, open) {
         "--exif-from",
         path.join(fixtures, "gps.heic"),
       );
+      /** Ensures reset releases both fallback previews and originals, including converted results. */
+      await heicPage.locator("#resetBtn").click();
+      const heicURLs = await heicPage.evaluate(() => window.urls);
+      check(
+        heicURLs.created === heicURLs.revoked &&
+          (await heicPage.locator("#sourceList .tile").count()) === 0,
+        `reset releases every HEIC preview, source and result URL: ${JSON.stringify(heicURLs)}`,
+      );
       await heicPage.close();
 
-      // A blocked decoder download must be reported and stay retryable.
+      /** Ensures a failed preview does not prevent input downloads, a clear conversion error or a later retry. */
       const blockedPage = await open();
       await blockedPage.route(decoderURL, (route) => route.abort());
       await blockedPage.goto(converterURL);
@@ -1662,6 +1721,11 @@ async function verifyPreviewPrefix(browser, open) {
         "photo.heic",
         "HEIC decoder could not load",
       );
+      check(
+        !(await sourceStates(blockedPage))[0].thumbnail,
+        "a decoder download failure leaves the input placeholder without an uncaught error",
+      );
+      await verifyInputDownload(blockedPage, 0, "photo.heic");
       await blockedPage.unroute(decoderURL);
       verify(
         await convertAndDownload(blockedPage, "photo.heic"),
@@ -1670,7 +1734,16 @@ async function verifyPreviewPrefix(browser, open) {
         "--size",
         "640x400",
       );
-      check(true, "a retry after the decoder CDN recovers converts the photo");
+      // Chromium does not fire change for the same selected file; clear it to exercise a new preview.
+      await blockedPage.locator("#resetBtn").click();
+      await blockedPage
+        .locator("#imageFile")
+        .setInputFiles(path.join(fixtures, "photo.heic"));
+      await waitThumbnails(blockedPage, "#sourceList");
+      check(
+        (await sourceStates(blockedPage))[0].thumbnail,
+        "reselection after the decoder download recovers restores the HEIC preview before conversion",
+      );
       await blockedPage.close();
     }
 
@@ -1771,7 +1844,7 @@ async function verifyPreviewPrefix(browser, open) {
     check(uploads.length === 0, `no file bytes are uploaded: ${uploads}`);
     check(pageErrors.length === 0, `no page errors: ${pageErrors}`);
     console.log(
-      `Passed ${checks} image converter assertions and independently verified ${verified} downloads with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "skipped, pillow-heif unavailable"}.`,
+      `Passed ${checks} image converter assertions and independently verified ${verified} images with Pillow. HEIC fixtures: ${heicFixtures ? "generated" : "skipped, pillow-heif unavailable"}; real photo: ${realHeic ? path.basename(realHeic) : "skipped, pillow-heif unavailable"}.`,
     );
   } finally {
     await browser.close();

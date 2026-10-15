@@ -884,12 +884,8 @@ const ImageConverter = (() => {
     return Boolean(blob) && blob.type === output.mime;
   }
 
-  /**
-   * Converts one file to the selected output format entirely on this device.
-   * The options may keep the source EXIF and may report "codec" before the decoder download.
-   */
-  async function convert(file, output, quality, options = {}) {
-    const { keepExif = false, onStage } = options;
+  /** Validates container policy and limits before either a thumbnail or conversion decodes it. */
+  async function readInput(file) {
     if (!file.size) throw failure("empty", "Choose a non-empty image file.");
     if (file.size > MAX_FILE_BYTES)
       throw failure(
@@ -914,6 +910,36 @@ const ImageConverter = (() => {
         "layered",
         "This HEIF file uses layered (L-HEVC) encoding, which is not supported. Export a single-layer HEIC and try again.",
       );
+    return { bytes, format };
+  }
+
+  /** Builds a small, metadata-free HEIC preview when the browser cannot display the source. */
+  async function thumbnail(file) {
+    const { bytes, format } = await readInput(file);
+    if (format !== "heif") return null;
+    const source = await decodeHeif(bytes);
+    const canvas = document.createElement("canvas");
+    try {
+      const scale = Math.min(1, 512 / Math.max(source.width, source.height));
+      canvas.width = Math.max(1, Math.round(source.width * scale));
+      canvas.height = Math.max(1, Math.round(source.height * scale));
+      canvas
+        .getContext("2d")
+        .drawImage(source.bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      return blob ? { blob, width: source.width, height: source.height } : null;
+    } finally {
+      source.bitmap.close();
+      canvas.width = canvas.height = 0;
+    }
+  }
+
+  /** Converts one file, optionally keeping EXIF and reporting the decoder-loading stage. */
+  async function convert(file, output, quality, options = {}) {
+    const { keepExif = false, onStage } = options;
+    const { bytes, format } = await readInput(file);
     const source =
       format === "heif"
         ? await decodeHeif(bytes, onStage, keepExif)
@@ -943,6 +969,7 @@ const ImageConverter = (() => {
     outputName,
     outputNames,
     sourceExif,
+    thumbnail,
   };
 })();
 

@@ -6,7 +6,7 @@ This build replaces libheif-js 1.23.5, whose libde265 1.0.15 produces magenta/gr
 
 ## Delivery and caching
 
-The first HEIC conversion in each page session loads this bundle from the same site; subsequent conversions reuse it in memory. Normal HEIC conversion contacts no third party, so a decoder CDN does not learn that a visitor converted a HEIC. The optional debug console is a separate, explicitly enabled CDN dependency.
+The first HEIC preview or conversion that needs the decoder loads this bundle from the same site; subsequent previews and conversions reuse it in memory. Normal HEIC conversion contacts no third party, so a decoder CDN does not learn that a visitor converted a HEIC. The optional debug console is a separate, explicitly enabled CDN dependency.
 
 On 14 October 2026, the deployed Pages preview served this 2,088,598-byte bundle with `Cache-Control: max-age=600`; the previous pinned jsDelivr bundle used a year-long immutable policy (`max-age=31536000`). Returning users may therefore need a network revalidation or another roughly 2 MB download once the Pages cache expires. An expired cache does not necessarily transfer the full body: Pages also provides an ETag for conditional requests. The versioned filename alone cannot extend the hosting service's cache lifetime. Each PR preview artifact additionally includes its own roughly 2.2 MB `src/vendor/` directory. These repeat-visit and artifact costs are the trade-off for the corrected decoder and same-site delivery.
 

@@ -15,9 +15,9 @@ let busy = false;
 // Incremented whenever the files or the settings change, so queued or in-flight work can be
 // discarded instead of writing results the user has already replaced.
 let operation = 0;
-// Every conversion is chained through this promise. The shared HEIF decoder releases its previous
-// context when it decodes again, so two conversions must never overlap: an invalidated batch keeps
-// the decoder until its current file settles, and its stale token stops it from starting the next.
+// Conversions and HEIC thumbnails share this queue: decoding releases the previous HEIF context,
+// so they must never overlap. An invalidated batch keeps the decoder until its current file
+// settles, and its stale token stops it from starting the next.
 let queue = Promise.resolve();
 
 function selectedOutput() {
@@ -119,13 +119,41 @@ function tileShell(entry, previewable, onLoad) {
 }
 function sourceTile(entry) {
   const parts = tileShell(entry, false, (image) => {
-    // Chromium reports oriented geometry for JPEG and PNG but ignores WebP EXIF orientation and
-    // cannot render HEIC at all, so a finished conversion overwrites these numbers with its own.
-    if (entry.result) return;
+    // A fallback thumbnail is downscaled; preserve the original geometry reported by its decoder.
+    // Finished conversions also take precedence over native thumbnails' orientation handling.
+    if (entry.thumbnailUrl || entry.result) return;
     entry.width = image.naturalWidth;
     entry.height = image.naturalHeight;
     updateEntry(entry);
   });
+  // Try the browser first. Only failed native previews need the HEIC decoder, and the fallback
+  // must share the conversion queue because decoding releases the previous HEIF context.
+  parts.image.addEventListener(
+    "error",
+    () => {
+      parts.tile.setAttribute("aria-busy", "true");
+      const run = async () => {
+        try {
+          if (!entry.sourceUrl) return;
+          const preview = await ImageConverter.thumbnail(entry.file);
+          // Selection changes release sourceUrl; stale work must not allocate a new object URL.
+          if (!entry.sourceUrl || !preview) return;
+          entry.width = preview.width;
+          entry.height = preview.height;
+          entry.thumbnailUrl = URL.createObjectURL(preview.blob);
+          parts.image.src = entry.thumbnailUrl;
+          updateEntry(entry);
+        } catch {
+          // A failed preview leaves the original download usable. Convert reports actionable errors
+          // and can retry a transient decoder download failure independently.
+        } finally {
+          parts.tile.removeAttribute("aria-busy");
+        }
+      };
+      queue = queue.then(run, run);
+    },
+    { once: true },
+  );
   const download = document.createElement("a");
   download.className = "tile-button tile-source-download";
   download.textContent = "Download input";
@@ -216,6 +244,7 @@ function releaseResults() {
 function releaseSources() {
   for (const entry of entries) {
     URL.revokeObjectURL(entry.sourceUrl);
+    if (entry.thumbnailUrl) URL.revokeObjectURL(entry.thumbnailUrl);
     entry.sourceUrl = null;
   }
 }
@@ -305,8 +334,7 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
       // Checked before the URL is created: nothing would ever revoke a stale result's URL.
       if (token !== operation) return;
       entry.status = "done";
-      // The output keeps the source geometry, which is also the only geometry this page can
-      // report for a HEIC file: no browser can render one as a thumbnail.
+      // A completed conversion supplies authoritative geometry even if the input preview failed.
       entry.width = result.width;
       entry.height = result.height;
       entry.result = {
