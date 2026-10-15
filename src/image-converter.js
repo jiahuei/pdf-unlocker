@@ -18,6 +18,14 @@ const ImageConverter = (() => {
     "msf1",
   ]);
   const HEIF_LAYERED_BRANDS = new Set(["heim", "heis"]);
+  // Every brand that can identify a HEIF file. Detection trusts the major brand alone, because
+  // compatible brands only declare extra conformance: a still photo may list a sequence profile,
+  // and a general ISO-BMFF container may list a HEIF one.
+  const HEIF_MAJOR_BRANDS = new Set([
+    ...HEIF_STILL_BRANDS,
+    ...HEIF_SEQUENCE_BRANDS,
+    ...HEIF_LAYERED_BRANDS,
+  ]);
   const OUTPUTS = [
     {
       id: "jpeg",
@@ -132,16 +140,10 @@ const ImageConverter = (() => {
     const brands = fileTypeBrands(bytes);
     // AVIF also carries generic HEIF brands, but its AV1 codec is not in our decoder bundle.
     if (brands.includes("avif") || brands.includes("avis")) return null;
-    if (
-      brands.some(
-        (brand) =>
-          HEIF_STILL_BRANDS.has(brand) ||
-          HEIF_SEQUENCE_BRANDS.has(brand) ||
-          HEIF_LAYERED_BRANDS.has(brand),
-      )
-    )
-      return "heif";
-    return null;
+    // Only the major brand says what a file is. Treating compatible brands as identification
+    // would pull unrelated ISO-BMFF containers into the HEIF path, where they download the 2 MB
+    // decoder before failing inside it instead of being refused as an unsupported type.
+    return HEIF_MAJOR_BRANDS.has(brands[0]) ? "heif" : null;
   }
 
   /** Walks whole PNG chunks, stopping at a truncated one instead of reading past the file. */
@@ -185,18 +187,11 @@ const ImageConverter = (() => {
     if (format === "png" && pngAnimated(bytes)) return "animated";
     if (format === "webp" && webpAnimated(bytes)) return "animated";
     if (format !== "heif") return null;
-    const brands = fileTypeBrands(bytes);
-    const [major] = brands;
+    // The major brand is already known to be HEIF-family, because that is what detectFormat
+    // requires, so no compatible-brand fallback is reachable here.
+    const [major] = fileTypeBrands(bytes);
     if (HEIF_SEQUENCE_BRANDS.has(major)) return "animated";
     if (HEIF_LAYERED_BRANDS.has(major)) return "layered";
-    if (HEIF_STILL_BRANDS.has(major)) return null;
-    // Compatibility can describe both still and sequence profiles. Only an unknown major
-    // needs this fallback; prefer a supported still profile regardless of list order.
-    if (brands.some((brand) => HEIF_STILL_BRANDS.has(brand))) return null;
-    if (brands.some((brand) => HEIF_SEQUENCE_BRANDS.has(brand)))
-      return "animated";
-    if (brands.some((brand) => HEIF_LAYERED_BRANDS.has(brand)))
-      return "layered";
     return null;
   }
 

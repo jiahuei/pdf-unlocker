@@ -875,9 +875,15 @@ async function verifyPreviewPrefix(browser, open) {
       "layered-heis.heic",
       "uses layered (L-HEVC) encoding",
     );
+    /** Ensures a non-HEIF container is refused as unsupported instead of reaching the decoder. */
+    await expectFailure(
+      sequencePage,
+      "mp4-compat.heic",
+      "Choose a HEIC, JPEG, PNG or WebP image",
+    );
     check(
       sequenceDecoderRequests === 0,
-      "rejected HEIF sequences and layered stills never load the decoder",
+      "rejected sequences, layered stills and non-HEIF containers never load the decoder",
     );
     await sequencePage.close();
 

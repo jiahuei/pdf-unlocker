@@ -307,6 +307,12 @@ def write_fixtures(directory):
     (directory / "truncated-ftyp.heic").write_bytes(
         struct.pack(">I4s4sI", 28, b"ftyp", b"heic", 0)
     )
+    # A general ISO-BMFF container that only declares HEIF compatibility. Detection trusts the
+    # major brand, so this is refused as an unsupported type instead of entering the HEIF path
+    # and downloading the decoder before failing inside it.
+    (directory / "mp4-compat.heic").write_bytes(
+        struct.pack(">I4s4sI", 24, b"ftyp", b"mp41", 0) + b"mp41mif1"
+    )
     (directory / "corrupt.heic").write_bytes(b"\x00\x00\x00\x18ftypheic" + bytes(64))
     write_heif_fixtures(directory)
 

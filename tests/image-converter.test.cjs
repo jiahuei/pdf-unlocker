@@ -456,11 +456,7 @@ test("rejects HEIF sequence and layered majors before decoding", async () => {
     ]),
     ...["heim", "heis"].map((brand) => [brand, "layered"]),
   ]) {
-    for (const bytes of [
-      heif(brand),
-      heif(brand, "mif1", "heic"),
-      heif("isom", brand),
-    ]) {
+    for (const bytes of [heif(brand), heif(brand, "mif1", "heic")]) {
       assert.equal(detectFormat(bytes), "heif", brand);
       assert.equal(rejectedContainer(bytes, "heif"), code, brand);
       let codecRequested = false;
@@ -487,6 +483,40 @@ test("rejects HEIF sequence and layered majors before decoding", async () => {
   }
 });
 
+/**
+ * Ensures only a HEIF-family major brand enters the HEIF path. Compatible brands declare extra
+ * conformance, so a general ISO-BMFF container listing one is not a HEIF file and must be refused
+ * immediately rather than downloading the 2 MB decoder only to fail inside it.
+ */
+test("refuses non-HEIF majors that merely declare HEIF compatibility", async () => {
+  for (const bytes of [
+    heif("mp41", "mp41", "mif1"),
+    heif("isom", "heic"),
+    heif("isom", "msf1"),
+    heif("isom", "heis"),
+  ]) {
+    assert.equal(detectFormat(bytes), null, String(bytes));
+    let codecRequested = false;
+    await assert.rejects(
+      convert(new Blob([bytes]), OUTPUTS[0], 0.8, {
+        onStage() {
+          codecRequested = true;
+        },
+      }),
+      {
+        code: "unsupported",
+        message:
+          "Choose a HEIC, JPEG, PNG or WebP image. Other file types are not supported.",
+      },
+    );
+    assert.equal(
+      codecRequested,
+      false,
+      "an unsupported container must not load the decoder",
+    );
+  }
+});
+
 /** Ensures sequence compatibility cannot misclassify documented stills or depend on list order. */
 test("gives supported still major brands precedence over compatible profiles", () => {
   for (const major of ["heic", "heix", "mif1", "heif"]) {
@@ -504,16 +534,6 @@ test("gives supported still major brands precedence over compatible profiles", (
         `${major}: ${compatible}`,
       );
     }
-  }
-  // For an unknown major, a supported still profile wins regardless of compatible-brand order.
-  for (const compatible of [
-    ["heic", "hevc"],
-    ["hevc", "heic"],
-    ["heis", "mif1"],
-  ]) {
-    const bytes = heif("isom", ...compatible);
-    assert.equal(detectFormat(bytes), "heif");
-    assert.equal(rejectedContainer(bytes, "heif"), null);
   }
 });
 
@@ -539,11 +559,11 @@ test("reads ordinary, to-EOF and 64-bit HEIF ftyp boxes", () => {
       assert.equal(rejectedContainer(bytes, "heif"), rejection);
     }
   }
-  const minorVersion = heif("isom", "heic");
+  const minorVersion = heif("mif1", "heic");
   minorVersion.set(text("avif"), 12);
   assert.equal(detectFormat(minorVersion), "heif");
   assert.equal(rejectedContainer(minorVersion, "heif"), null);
-  const afterBox = Uint8Array.from([...heif("isom", "heic"), ...text("avif")]);
+  const afterBox = Uint8Array.from([...heif("mif1", "heic"), ...text("avif")]);
   assert.equal(detectFormat(afterBox), "heif");
   assert.equal(rejectedContainer(afterBox, "heif"), null);
 });
@@ -553,9 +573,6 @@ test("retains recognizable truncated HEIF headers for decoder errors", () => {
   const ordinary = heif("heic", "msf1").subarray(0, 19);
   assert.equal(detectFormat(ordinary), "heif");
   assert.equal(rejectedContainer(ordinary, "heif"), null);
-  const unknownMajor = heif("isom", "msf1").subarray(0, 19);
-  assert.equal(detectFormat(unknownMajor), null);
-  assert.equal(rejectedContainer(unknownMajor, "heif"), null);
   const extended = Uint8Array.from([
     ...uint32BE(1),
     ...text("ftyp"),
