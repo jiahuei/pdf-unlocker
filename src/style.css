@@ -363,6 +363,8 @@ h1 {
 }
 input[type="range"] {
   width: 100%;
+  /* Native range margins otherwise push a full-width control beyond its field. */
+  margin-inline: 0;
   accent-color: var(--accent);
 }
 .checkbox-field {
