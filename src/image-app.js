@@ -15,9 +15,9 @@ let busy = false;
 // Incremented whenever the files or the settings change, so queued or in-flight work can be
 // discarded instead of writing results the user has already replaced.
 let operation = 0;
-// Conversions and HEIC thumbnails share this queue: decoding releases the previous HEIF context,
-// so they must never overlap. An invalidated batch keeps the decoder until its current file
-// settles, and its stale token stops it from starting the next.
+// Conversions share this queue: decoding releases the previous HEIF context, so batches must
+// never overlap. An invalidated batch keeps the decoder until its current file settles, and
+// its stale token stops it from starting the next.
 let queue = Promise.resolve();
 
 function selectedOutput() {
@@ -126,34 +126,6 @@ function sourceTile(entry) {
     entry.height = image.naturalHeight;
     updateEntry(entry);
   });
-  // Try the browser first. Only failed native previews need the HEIC decoder, and the fallback
-  // must share the conversion queue because decoding releases the previous HEIF context.
-  parts.image.addEventListener(
-    "error",
-    () => {
-      parts.tile.setAttribute("aria-busy", "true");
-      const run = async () => {
-        try {
-          if (!entry.sourceUrl) return;
-          const preview = await ImageConverter.thumbnail(entry.file);
-          // Selection changes release sourceUrl; stale work must not allocate a new object URL.
-          if (!entry.sourceUrl || !preview) return;
-          entry.width = preview.width;
-          entry.height = preview.height;
-          entry.thumbnailUrl = URL.createObjectURL(preview.blob);
-          parts.image.src = entry.thumbnailUrl;
-          updateEntry(entry);
-        } catch {
-          // A failed preview leaves the original download usable. Convert reports actionable errors
-          // and can retry a transient decoder download failure independently.
-        } finally {
-          parts.tile.removeAttribute("aria-busy");
-        }
-      };
-      queue = queue.then(run, run);
-    },
-    { once: true },
-  );
   const download = document.createElement("a");
   download.className = "tile-button tile-source-download";
   download.textContent = "Download input";
@@ -246,6 +218,7 @@ function releaseSources() {
     URL.revokeObjectURL(entry.sourceUrl);
     if (entry.thumbnailUrl) URL.revokeObjectURL(entry.thumbnailUrl);
     entry.sourceUrl = null;
+    entry.thumbnailUrl = null;
   }
 }
 function clearPreview() {
@@ -337,6 +310,15 @@ async function runBatch(token, batch, { output, quality, keepExif }) {
       // A completed conversion supplies authoritative geometry even if the input preview failed.
       entry.width = result.width;
       entry.height = result.height;
+      // Keep native previews and existing source thumbnails independent of output settings.
+      if (
+        result.preview &&
+        !entry.thumbnailUrl &&
+        !entry.sourceTile.image.naturalWidth
+      ) {
+        entry.thumbnailUrl = URL.createObjectURL(result.preview);
+        entry.sourceTile.image.src = entry.thumbnailUrl;
+      }
       entry.result = {
         url: URL.createObjectURL(result.blob),
         name: names[index],

@@ -173,7 +173,8 @@
           </div>
           <p class="help">
             If the original image contains orientation metadata, the converter
-            uses it to rotate or mirror the image.
+            uses it to rotate or mirror the image whether EXIF retention is on
+            or off.
           </p>
           <div id="batchPanel" class="download-section" hidden>
             <p
@@ -195,8 +196,10 @@
           <h2 id="formats-title">Supported conversions</h2>
           <p class="section-note">
             Every conversion below runs in your browser. The HEIC decoder loads
-            from this site when first needed for a HEIC preview or conversion
-            and is reused for the rest of the page session.
+            from this site for the first HEIC conversion and is reused for the
+            rest of the page session. If your browser cannot display a HEIC
+            directly, its input tile shows a placeholder until conversion
+            succeeds.
           </p>
         </div>
         <div class="matrix-card">
@@ -248,10 +251,9 @@
             separate explanation.
           </li>
           <li>
-            Orientation and supported colour profiles are applied before export
-            to sRGB. Source colour profiles are not copied. Unsupported HEIC
-            colour spaces, including grayscale ICC profiles and HDR, are
-            rejected.
+            Supported colour profiles are applied before export to sRGB. Source
+            colour profiles are not copied. Unsupported HEIC colour spaces,
+            including grayscale ICC profiles and HDR, are rejected.
           </li>
           <li>
             EXIF, including the GPS position, is dropped unless you select
