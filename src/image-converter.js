@@ -403,7 +403,7 @@ const ImageConverter = (() => {
   let heifDecoder = null;
 
   function loadHeif() {
-    // The 2 MB decoder is fetched only for HEIC input. It loads through a script element rather
+    // The 2 MB decoder is fetched only for HEIC conversion. It loads through a script element rather
     // than a dynamic import because a browser caches a failed module resolution for the whole
     // document, which would turn one dropped connection into a permanent failure.
     if (!heifPromise)
@@ -884,7 +884,7 @@ const ImageConverter = (() => {
     return Boolean(blob) && blob.type === output.mime;
   }
 
-  /** Validates container policy and limits before either a thumbnail or conversion decodes it. */
+  /** Validates container policy and limits before decoding the input. */
   async function readInput(file) {
     if (!file.size) throw failure("empty", "Choose a non-empty image file.");
     if (file.size > MAX_FILE_BYTES)
@@ -913,11 +913,8 @@ const ImageConverter = (() => {
     return { bytes, format };
   }
 
-  /** Builds a small, metadata-free HEIC preview when the browser cannot display the source. */
-  async function thumbnail(file) {
-    const { bytes, format } = await readInput(file);
-    if (format !== "heif") return null;
-    const source = await decodeHeif(bytes);
+  /** Reuses the live source pixels for a bounded, metadata-free preview before they are released. */
+  async function sourcePreview(source) {
     const canvas = document.createElement("canvas");
     try {
       const scale = Math.min(1, 512 / Math.max(source.width, source.height));
@@ -929,9 +926,8 @@ const ImageConverter = (() => {
       const blob = await new Promise((resolve) =>
         canvas.toBlob(resolve, "image/png"),
       );
-      return blob ? { blob, width: source.width, height: source.height } : null;
+      return blob;
     } finally {
-      source.bitmap.close();
       canvas.width = canvas.height = 0;
     }
   }
@@ -946,6 +942,7 @@ const ImageConverter = (() => {
         : await decodeNative(bytes, format, keepExif);
     try {
       const result = await encode(source, output, quality);
+      if (format === "heif") result.preview = await sourcePreview(source);
       result.imageCount =
         format === "jpeg" ? jpegImageCount(bytes) : source.imageCount || 1;
       return result;
@@ -969,7 +966,6 @@ const ImageConverter = (() => {
     outputName,
     outputNames,
     sourceExif,
-    thumbnail,
   };
 })();
 
