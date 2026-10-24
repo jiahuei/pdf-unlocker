@@ -29,6 +29,8 @@ Read [SPEC.md](SPEC.md) before changing application or deployment code, especial
 
   Keep this proportional: straightforward changes do not need a written alternatives analysis.
 
+- **Get Buy-In for Speculative Robustness**: Before adding complexity solely for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode and impact, evidence for its likelihood (or that likelihood is unknown), and the implementation and maintenance cost. Present the simpler alternative and its trade-offs, then get the user's explicit agreement before expanding scope. Reuse existing approval when it already covers that trade-off, and continue independent authorized work while waiting. Do not silently expand scope for theoretical robustness. Unknown likelihood is not evidence that a risk is negligible; this rule does not justify weakening required controls or delaying an already-authorized fix for a demonstrated defect.
+
 - **Simplify After Implementation**: Treat the first working version and the requirements behind it as drafts.
   1. Run relevant tests to uncover hidden requirements and assumptions.
   2. Relate every code path back to a concrete requirement, and challenge whether that requirement is truly necessary (first principles approach).
