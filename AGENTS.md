@@ -31,6 +31,12 @@ Read [SPEC.md](SPEC.md) before changing application or deployment code, especial
 
 - **Get Buy-In for Speculative Robustness**: Before adding complexity solely for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode and impact, evidence for its likelihood (or that likelihood is unknown), and the implementation and maintenance cost. Present the simpler alternative and its trade-offs, then get the user's explicit agreement before expanding scope. Reuse existing approval when it already covers that trade-off, and continue independent authorized work while waiting. Do not silently expand scope for theoretical robustness. Unknown likelihood is not evidence that a risk is negligible; this rule does not justify weakening required controls or delaying an already-authorized fix for a demonstrated defect.
 
+- **Check Shared Models Before Editing**: A fix at the failing call site may belong in an existing shared layer.
+  1. Before adding or moving a configuration field, inspect its base classes, sibling models, presets, validators, and consumers. Trace how the value reaches runtime through construction and serialization.
+  2. Choose the existing owner by responsibility and intended consumers, not merely where the failing test accepts the field. Use a shared base when the setting belongs to all its consumers; keep variant-specific settings on the relevant model.
+  3. Establish the intended production contract before changing a public API. Tests should verify that contract, not define new requirements implicitly. Explain any change to the contract.
+  4. Verify affected defaults, preset inheritance, override detection, and serialization across consumers, not only the originally failing path.
+
 - **Simplify After Implementation**: Treat the first working version and the requirements behind it as drafts.
   1. Run relevant tests to uncover hidden requirements and assumptions.
   2. Relate every code path back to a concrete requirement, and challenge whether that requirement is truly necessary (first principles approach).
