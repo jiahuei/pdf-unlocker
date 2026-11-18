@@ -201,6 +201,13 @@ Do not format unrelated files merely to make a repository-wide check pass.
 - Use meaningful variable and function names.
 - **Pin dependency versions**: If dependencies are added, use exact versions (e.g. `"2.0.0"`) in their manifests and setup commands. Never use caret (`^`) or tilde (`~`) ranges.
 
+### Writing and Communication
+
+- Apply ASD-STE100 Simplified Technical English principles to all written output, including replies to the user, documentation, code comments, commit messages, PR titles and descriptions, and review comments.
+- Write for understanding on the first read. Use familiar words, concrete and consistent terms, and simple sentence structures. Use code identifiers when they are more precise than a general description.
+- Express one main idea per sentence. Prefer active voice and make conditions, actions, and consequences explicit. Present ideas in the order the reader needs to understand them.
+- Include the information needed to understand the reasoning. Remove detail that distracts from it. Keep the text succinct without omitting necessary context or sacrificing technical accuracy.
+
 ### Code Comments
 
 - Prefer clear code, meaningful names, and straightforward structure over comments that merely describe what the code does.
@@ -213,9 +220,27 @@ Do not format unrelated files merely to make a repository-wide check pass.
   - depends on subtle assumptions, ordering requirements, external behaviour, or non-obvious invariants;
   - is sufficiently complex that its intent or correctness would otherwise be difficult to verify.
 
-- Comments should explain **why** the implementation exists, what constraint or decision led to it, and — when useful — what could go wrong if it is changed.
+- In general, state the problem or purpose first. Then briefly explain what must be done or how the solution resolves the issue. State the consequence of the problem or of violating the requirement. Use only as many sentences as needed to explain these points clearly.
+- When wrapping comments, prefer line breaks at punctuation, such as sentence endings or commas. Keep related phrases together rather than filling each line to the maximum width. Respect the project's line-length limit.
 - Do not add comments that simply restate the code, narrate each operation, or compensate for unnecessarily complicated implementation.
 - Keep comments accurate when modifying the associated code. Remove comments that are obsolete, misleading, or no longer useful.
+
+For example, "credential version" makes the reader infer which value matters and why. Name `refresh_counter` and explain the race and its consequence.
+
+Unclear:
+
+```python
+# Keep the credential version that was authenticated under the account lock.
+# Reloading it after commit could turn an old password into a new valid session.
+```
+
+Clearer:
+
+```python
+# Guards against a login racing with a concurrent password reset.
+# The session must retain the `refresh_counter` value read when its password was verified.
+# Otherwise it may allow a session authenticated with the old password to survive the reset.
+```
 
 ## Code Review and Refactoring Guidelines
 
